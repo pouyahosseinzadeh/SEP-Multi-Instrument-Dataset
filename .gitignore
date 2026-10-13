@@ -1,0 +1,6 @@
+data/cache/
+data/processed/
+reports/figures/
+__pycache__/
+.pytest_cache/
+*.pyc
