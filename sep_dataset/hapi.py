@@ -29,7 +29,7 @@ DEFAULT_HAPI_SPECS = [
         cadence="5min",
         notes="Near-Earth OMNI 5-minute solar wind, IMF, indices, and GOES proton flux where available.",
         feature_aliases={
-            "Bmag": ["ABS_B", "Magnitude", "B_TOT", "Bt", "IMF Magnitude Avg"],
+            "Bmag": ["F", "ABS_B", "Magnitude", "B_TOT", "Bt", "IMF Magnitude Avg"],
             "Bx_GSE": ["BX_GSE", "Bx", "BX", "Bx GSE"],
             "By_GSM": ["BY_GSM", "By GSM", "BY"],
             "Bz_GSM": ["BZ_GSM", "Bz GSM", "BZ"],
@@ -141,7 +141,10 @@ class HapiClient:
                         units=str(chosen.get("units", "")),
                     )
                 )
-        return selected
+        # HAPI servers may require the subset in the same order as /info.
+        # Feature configuration order is independent of the server column order.
+        parameter_order = {str(param.get("name")): i for i, param in enumerate(info.get("parameters", []))}
+        return sorted(selected, key=lambda item: parameter_order[item.parameter])
 
     def data(
         self,
@@ -155,6 +158,8 @@ class HapiClient:
         if not selected:
             return pd.DataFrame()
         info = info or self.info(spec)
+        parameter_order = {str(param.get("name")): i for i, param in enumerate(info.get("parameters", []))}
+        selected.sort(key=lambda item: parameter_order[item.parameter])
         time_col = self.time_parameter(info)
         params = ",".join(item.parameter for item in selected)
         cache_path = self.cache_dir / "data" / f"{cache_key(spec.server, spec.dataset, params, isoformat_z(start), isoformat_z(stop))}.csv"
@@ -185,16 +190,26 @@ class HapiClient:
                 response = requests.get(spec.server.rstrip("/") + "/data", params=query, timeout=self.timeout)
                 response.raise_for_status()
                 text = response.text
-                if text.lstrip().startswith("{"):
+                # CDAWeb has also returned malformed JSON errors beginning
+                # with a comma and a "status" key while using HTTP 200.
+                content_start = text.lstrip("\ufeff \t\r\n,")
+                if content_start.startswith(("{", "[", "<", '"status"')):
                     errors.append(text[:300])
                     continue
                 names = [time_col] + [item.parameter for item in selected]
                 from io import StringIO
 
-                df = pd.read_csv(StringIO(text), comment="#", header=None, names=names)
+                if not text.strip():
+                    return pd.DataFrame(columns=names)
+                df = pd.read_csv(StringIO(text), comment="#", header=None)
                 if df.empty:
                     return df
+                if df.shape[1] != len(names):
+                    raise ValueError(f"HAPI CSV has {df.shape[1]} columns; expected {len(names)}")
+                df.columns = names
                 df[time_col] = pd.to_datetime(df[time_col], utc=True, errors="coerce")
+                if df[time_col].isna().any():
+                    raise ValueError("HAPI CSV contains invalid timestamps")
                 for item in selected:
                     df[item.parameter] = clean_numeric_series(df[item.parameter], fill_values=[item.fill])
                 ensure_dir(cache_path.parent)
@@ -219,6 +234,12 @@ class HapiMonthlyStore:
         if key in self._month_cache:
             return self._month_cache[key]
         stop = next_month(start)
+        coverage_start = pd.to_datetime(self.info.get("startDate"), utc=True, errors="coerce")
+        coverage_stop = pd.to_datetime(self.info.get("stopDate"), utc=True, errors="coerce")
+        if ((pd.notna(coverage_start) and stop <= coverage_start)
+                or (pd.notna(coverage_stop) and start > coverage_stop)):
+            self._month_cache[key] = pd.DataFrame()
+            return self._month_cache[key]
         try:
             df = self.client.data(self.spec, self.selected, start, stop, info=self.info)
         except Exception as exc:

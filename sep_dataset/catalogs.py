@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Iterable
 
@@ -22,6 +23,7 @@ from .utils import (
 
 
 NOAA_SPE_URLS = [
+    "https://www.ngdc.noaa.gov/stp/space-weather/interplanetary-data/solar-proton-events/SEP%20page%20code.html",
     "https://ftp.swpc.noaa.gov/pub/indices/SPE.txt",
     "https://umbra.nascom.nasa.gov/SEP/seps.html",
 ]
@@ -30,6 +32,7 @@ CDAW_MAJOR_SEP_URL = "https://cdaw.gsfc.nasa.gov/CME_list/sepe/"
 
 DONKI_ENDPOINTS = [
     "https://ccmc.gsfc.nasa.gov/DONKI-API/get/SEP",
+    "https://ccmc.gsfc.nasa.gov/DONKI/WS/get/SEP",
     "https://kauai.ccmc.gsfc.nasa.gov/DONKI/WS/get/SEP",
     "https://api.nasa.gov/DONKI/SEP",
 ]
@@ -76,10 +79,82 @@ def _finalize_events(rows: list[dict[str, object]]) -> pd.DataFrame:
     return df[EVENT_COLUMNS]
 
 
-def _split_noaa_cells(line: str) -> list[str]:
-    if "|" in line:
-        return [compact_spaces(cell) for cell in line.split("|") if compact_spaces(cell)]
-    return [compact_spaces(cell) for cell in re.split(r"\s{2,}", line) if compact_spaces(cell)]
+class _NoaaTableParser(HTMLParser):
+    """Read both modern tables and legacy HTML with implicit TD/TR endings."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.rows: list[list[str]] = []
+        self.row: list[str] = []
+        self.cell: list[str] | None = None
+
+    def _end_cell(self) -> None:
+        if self.cell is not None:
+            self.row.append(compact_spaces("".join(self.cell)))
+            self.cell = None
+
+    def _end_row(self) -> None:
+        self._end_cell()
+        if self.row:
+            self.rows.append(self.row)
+            self.row = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "tr":
+            self._end_row()
+        elif tag in {"td", "th"}:
+            self._end_cell()
+            self.cell = []
+        elif tag == "br" and self.cell is not None:
+            self.cell.append(" ")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"td", "th"}:
+            self._end_cell()
+        elif tag in {"tr", "table"}:
+            self._end_row()
+
+    def handle_data(self, data: str) -> None:
+        if self.cell is not None:
+            self.cell.append(data)
+
+    def close(self) -> None:
+        super().close()
+        self._end_row()
+
+
+def _noaa_table_rows(text: str) -> list[list[str]]:
+    if re.search(r"<t[dh]\b", text, flags=re.IGNORECASE):
+        parser = _NoaaTableParser()
+        parser.feed(text)
+        parser.close()
+        return parser.rows
+    # Split PRE/fixed-width data before collapsing the column spacing.
+    return [
+        [compact_spaces(cell) for cell in re.split(r"\s*\|\s*" if "|" in line else r"\s{2,}", line.strip())]
+        for line in strip_html_to_text(text).splitlines()
+        if line.strip()
+    ]
+
+
+def _noaa_time(value: str, year: int, reference: pd.Timestamp | None = None) -> pd.Timestamp:
+    value = compact_spaces(value)
+    if reference is not None and pd.notna(reference) and re.fullmatch(r"\d{1,2}/\d{3,4}", value):
+        # Some legacy flare cells omit the month (e.g. 14/0209 in July).
+        # Pick the nearest valid date, including adjacent-month boundaries.
+        candidates = []
+        for delta in (-1, 0, 1):
+            month = reference.replace(day=1) + pd.DateOffset(months=delta)
+            candidate = parse_month_day_hm(f"{month.month}/{value}", month.year)
+            if pd.notna(candidate):
+                candidates.append(candidate)
+        return min(candidates, key=lambda ts: abs(ts - reference)) if candidates else pd.NaT
+    explicit_year = re.match(r"^(\d{4})\s+", value)
+    if explicit_year:
+        year = int(explicit_year.group(1))
+        value = value[explicit_year.end():]
+        reference = None
+    return parse_month_day_hm(value, year, reference=reference)
 
 
 def parse_noaa_spe_events(text: str, source_url: str = "") -> pd.DataFrame:
@@ -89,44 +164,47 @@ def parse_noaa_spe_events(text: str, source_url: str = "") -> pd.DataFrame:
     at different mirrors. This parser accepts all three by using the date cells
     rather than fragile column widths.
     """
-    text = strip_html_to_text(text)
     rows: list[dict[str, object]] = []
     current_year: int | None = None
-    month_names = "|".join(name.title() for name in ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"])
-    start_re = re.compile(rf"^({month_names})\s+\d{{1,2}}/\d{{3,4}}\b")
+    legacy_start = re.compile(r"^[A-Za-z]{3,9}\s+\d{1,2}/\d{3,4}\b")
 
-    for raw_line in text.splitlines():
-        line = compact_spaces(raw_line)
-        if not line:
+    for cells in _noaa_table_rows(text):
+        first = cells[0] if cells else ""
+        modern = re.match(r"^(\d{4})\s+\d{1,2}/\d{1,2}[ /]\d{3,4}$", first)
+        if not modern and not legacy_start.match(first):
+            # Year headings have one nonempty cell; region IDs can also be 4 digits.
+            nonempty = [cell for cell in cells if cell]
+            if len(nonempty) == 1 and re.fullmatch(r"19[7-9]\d|20\d{2}", nonempty[0]):
+                current_year = int(nonempty[0])
             continue
-        year_cells = re.findall(r"\b(19[7-9]\d|20\d{2})\b", line)
-        if year_cells and not start_re.search(line):
-            current_year = int(year_cells[0])
+        year = int(modern.group(1)) if modern else current_year
+        if year is None or len(cells) < 3:
             continue
-        if current_year is None or not start_re.search(line):
-            continue
-
-        cells = _split_noaa_cells(line)
-        if len(cells) < 3:
-            continue
-        start_time = parse_month_day_hm(cells[0], current_year)
-        max_time = parse_month_day_hm(cells[1], current_year, reference=start_time)
+        start_time = _noaa_time(cells[0], year)
         if pd.isna(start_time):
             continue
+        max_time = _noaa_time(cells[1], year, reference=start_time)
         peak = parse_float(cells[2])
 
         flare_time = pd.NaT
         flare_class = ""
         flare_location = ""
         active_region = ""
-        if len(cells) >= 6:
-            flare_time = parse_month_day_hm(cells[5], current_year, reference=start_time)
-        if len(cells) >= 7:
-            flare_class = cells[6]
-        if len(cells) >= 8:
-            flare_location = cells[7]
-        if len(cells) >= 9:
-            active_region = cells[8]
+        if modern:
+            active_region = cells[3] if len(cells) > 3 else ""
+            flare_location = cells[4] if len(cells) > 4 else ""
+            if len(cells) > 5:
+                flare_class = cells[5].split()[0] if cells[5] else ""
+                flare_time = _noaa_time(cells[5], year, reference=start_time)
+        else:
+            if len(cells) >= 6:
+                flare_time = _noaa_time(cells[5], year, reference=start_time)
+            if len(cells) >= 7:
+                flare_class = cells[6]
+            if len(cells) >= 8:
+                flare_location = cells[7]
+            if len(cells) >= 9:
+                active_region = cells[8]
 
         rows.append(
             {
@@ -151,9 +229,16 @@ def fetch_noaa_spe_events(cache_dir: str | Path = "data/cache/catalogs") -> pd.D
     for url in NOAA_SPE_URLS:
         try:
             cache_path = cache_dir / f"noaa_spe_{cache_key(url)}.txt"
-            text = http_get_text(url, cache_path=cache_path)
+            text = http_get_text(url, cache_path=cache_path, timeout=20, retries=2)
             events = parse_noaa_spe_events(text, source_url=url)
+            if events.empty and cache_path.exists():
+                # A previous run may have cached a maintenance/error HTML page.
+                text = http_get_text(url, timeout=20, retries=2)
+                events = parse_noaa_spe_events(text, source_url=url)
+                if not events.empty:
+                    cache_path.write_text(text, encoding="utf-8")
             if not events.empty:
+                print(f"[INFO] NOAA SPE: {len(events)} events from {url}")
                 return events
             errors.append(f"{url}: no parseable rows")
         except Exception as exc:  # pragma: no cover - live network only
@@ -332,22 +417,42 @@ def fetch_donki_sep_events(
     api_key: str = "DEMO_KEY",
 ) -> pd.DataFrame:
     cache_dir = ensure_dir(cache_dir)
-    start_s = utc_timestamp(start).strftime("%Y-%m-%d")
-    end_s = utc_timestamp(end).strftime("%Y-%m-%d")
-    errors: list[str] = []
-    for endpoint in DONKI_ENDPOINTS:
-        params: dict[str, object] = {"startDate": start_s, "endDate": end_s}
-        if "api.nasa.gov" in endpoint:
-            params["api_key"] = api_key
-        try:
-            payload = _download_json(endpoint, params, cache_dir / f"donki_sep_{cache_key(endpoint, start_s, end_s, api_key)}.json")
-            events = parse_donki_sep_events(payload, source_url=endpoint)
-            if not events.empty:
-                return events
-            errors.append(f"{endpoint}: no rows")
-        except Exception as exc:  # pragma: no cover - live network only
-            errors.append(f"{endpoint}: {exc}")
-    raise RuntimeError("DONKI SEP catalog unavailable: " + "; ".join(errors))
+    cursor = utc_timestamp(start).normalize()
+    end_ts = utc_timestamp(end).normalize()
+    if pd.isna(cursor) or pd.isna(end_ts) or cursor > end_ts:
+        raise ValueError("DONKI start and end must be valid dates with start <= end")
+    frames: list[pd.DataFrame] = []
+    while cursor <= end_ts:
+        # DONKI rejects ranges over 60 days, including multi-year requests.
+        stop = min(cursor + pd.Timedelta(days=59), end_ts)
+        start_s = cursor.strftime("%Y-%m-%d")
+        end_s = stop.strftime("%Y-%m-%d")
+        print(f"[INFO] DONKI SEP: {start_s} through {end_s}")
+        errors: list[str] = []
+        for endpoint in DONKI_ENDPOINTS:
+            params: dict[str, object] = {"startDate": start_s, "endDate": end_s}
+            if "api.nasa.gov" in endpoint:
+                params["api_key"] = api_key
+            try:
+                payload = _download_json(endpoint, params, cache_dir / f"donki_sep_{cache_key(endpoint, start_s, end_s, api_key)}.json")
+                result = payload.get("results") if isinstance(payload, dict) else payload
+                if not isinstance(result, list):
+                    raise ValueError(f"expected an event list, received {str(payload)[:200]}")
+                events = parse_donki_sep_events(result, source_url=endpoint)
+                if result and events.empty:
+                    raise ValueError("response contains no parseable SEP event timestamps")
+                if not events.empty:
+                    frames.append(events)
+                # [] is a successful response during quiet intervals.
+                break
+            except Exception as exc:
+                errors.append(f"{endpoint}: {exc}")
+        else:
+            raise RuntimeError(f"DONKI SEP catalog unavailable for {start_s}..{end_s}: " + "; ".join(errors))
+        cursor = stop + pd.Timedelta(days=1)
+    if not frames:
+        return _empty_events()
+    return pd.concat(frames, ignore_index=True).drop_duplicates(["event_id", "start_time"]).sort_values("start_time").reset_index(drop=True)
 
 
 def load_memsep_events(path_or_url: str | Path) -> pd.DataFrame:

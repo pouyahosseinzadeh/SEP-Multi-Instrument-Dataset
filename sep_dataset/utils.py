@@ -153,7 +153,7 @@ def parse_month_day_hm(value: object, year: int, reference: pd.Timestamp | None 
     if not text or "--" in text:
         return pd.NaT
     match = re.search(
-        r"(?P<month>[A-Za-z]{3}|\d{1,2})\s*/?\s*(?P<day>\d{1,2})[/\s]+(?P<hour>\d{1,2})(?::?(?P<minute>\d{2}))",
+        r"(?<![A-Za-z0-9])(?P<month>[A-Za-z]{3,9}|\d{1,2})(?:\s*/\s*|\s+)(?P<day>\d{1,2})[/\s]+(?P<hour>\d{1,2})(?::?(?P<minute>\d{2}))(?!\d)",
         text,
     )
     if not match:
@@ -169,12 +169,18 @@ def parse_month_day_hm(value: object, year: int, reference: pd.Timestamp | None 
     if hour == 24:
         hour = 0
         extra_day = 1
-    ts = pd.Timestamp(year=year, month=month, day=day, hour=hour, minute=minute, tz="UTC")
-    if extra_day:
+    try:
+        ts = pd.Timestamp(year=year, month=month, day=day, hour=hour, minute=minute, tz="UTC")
         ts += pd.Timedelta(days=extra_day)
-    if reference is not None and ts < reference - pd.Timedelta(days=180):
-        ts = pd.Timestamp(year=year + 1, month=month, day=day, hour=hour, minute=minute, tz="UTC")
-    return ts
+        if reference is not None and pd.notna(reference):
+            if ts < reference - pd.Timedelta(days=180):
+                ts = ts.replace(year=ts.year + 1)
+            elif ts > reference + pd.Timedelta(days=180):
+                ts = ts.replace(year=ts.year - 1)
+        return ts
+    except ValueError:
+        # Keep the event even when an optional field in a source is malformed.
+        return pd.NaT
 
 
 def parse_ymd_hm(date_value: object, time_value: object) -> pd.Timestamp:
