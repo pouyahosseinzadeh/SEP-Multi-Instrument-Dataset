@@ -1,74 +1,47 @@
+"""Commands for the original ten-feature project extended through 2025."""
 from __future__ import annotations
-
 import argparse
+import json
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Build and evaluate an extended multi-instrument SEP dataset.")
+    parser = argparse.ArgumentParser(description="Preserve the original ten MEMSEP time-series files and append observed flare samples through 2025.")
     sub = parser.add_subparsers(dest="command", required=True)
-
-    build = sub.add_parser("build", help="Fetch catalogs and HAPI time series, then build the wide dataset.")
-    build.add_argument("--start", default="1998-01-01", help="Inclusive start date, YYYY-MM-DD.")
-    build.add_argument("--end", default="2024-12-31", help="Inclusive end date, YYYY-MM-DD.")
-    build.add_argument("--output-dir", default="data/processed")
-    build.add_argument("--cache-dir", default="data/cache")
-    build.add_argument("--memsep-csv", default=None, help="Optional local or remote MEMSEP CSV to include as another catalog source.")
-    build.add_argument("--catalog-only", action="store_true", help="Only write raw/merged event catalogs and sample anchors.")
-    build.add_argument("--anchor", choices=["start_time", "flare_time", "max_time"], default="start_time")
-    build.add_argument("--negative-ratio", type=float, default=3.0, help="Quiet-time negative samples per positive event.")
-    build.add_argument("--negative-cadence", default="12h", help="Candidate cadence for quiet-time negatives.")
-    build.add_argument("--blackout-days", type=float, default=3.0, help="Exclude quiet-time anchors within this many days of an SEP start.")
-    build.add_argument("--lookback-hours", type=float, default=24.0)
-    build.add_argument("--cadence", default="5min")
-    build.add_argument("--fill-value", type=float, default=-9999.0)
-    build.add_argument("--dataset", action="append", dest="datasets", help="Restrict HAPI sources by name. Can be repeated.")
-    build.add_argument("--no-noaa", action="store_true", help="Disable NOAA/SWPC SPE catalog.")
-    build.add_argument("--no-cdaw", action="store_true", help="Disable CDAW major SEP catalog.")
-    build.add_argument("--no-donki", action="store_true", help="Disable NASA DONKI SEP catalog.")
-    build.add_argument("--donki-api-key", default="DEMO_KEY")
-
-    plots = sub.add_parser("plot", help="Create PCA, missingness, coverage, and distribution plots.")
-    plots.add_argument("--dataset-csv", required=True)
-    plots.add_argument("--outdir", default="reports/figures")
+    build = sub.add_parser("build", help="Build ten original-layout files; report unavailable original channels.")
+    build.add_argument("--end-date", "--end", default="2025-12-31", help="Inclusive final day, YYYY-MM-DD.")
+    build.add_argument("--extension-start", default="2014-01-01", help="New cohort start. Historical 1998–2013 always preserved.")
+    build.add_argument("--outdir", "--output-dir", default="data/processed/compatible_1998_2025")
+    build.add_argument("--cache-dir", default="data/cache/compatible")
+    build.add_argument("--baseline-dir", help="Optional folder containing your ten original *_filled.csv files or the published Zenodo CSVs. Otherwise download frozen originals.")
+    plot = sub.add_parser("plot", help="Original per-feature time series, confidence intervals, energy bands and full-window PCA.")
+    plot.add_argument("--dataset-dir", default="data/processed/compatible_1998_2025")
+    plot.add_argument("--outdir", default="reports/figures_1998_2025")
+    plot.add_argument("--bands", nargs="+", type=int, choices=[10, 30, 60, 100], default=[10, 30, 60, 100])
+    plot.add_argument("--features", nargs="+", choices=["Vx", "flow_speed", "proton_density", "T", "F", "Xs", "Xl", "P4", "P5", "P6"])
+    plot.add_argument("--tsne", action="store_true", help="Also run optional t-SNE; may be slow.")
+    plot.add_argument("--tsne-max-samples", type=int, default=3000)
+    valid = sub.add_parser("validate", help="Verify all ten files, historical preservation, alignment and quality reports.")
+    valid.add_argument("--dataset-dir", default="data/processed/compatible_1998_2025")
     return parser
 
 
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     if args.command == "build":
-        from .dataset import build_extended_dataset
-
-        result = build_extended_dataset(
-            start=args.start,
-            end=args.end,
-            output_dir=args.output_dir,
-            cache_dir=args.cache_dir,
-            memsep_csv=args.memsep_csv,
-            catalog_only=args.catalog_only,
-            anchor=args.anchor,
-            negative_ratio=args.negative_ratio,
-            negative_cadence=args.negative_cadence,
-            blackout_days=args.blackout_days,
-            lookback_hours=args.lookback_hours,
-            cadence=args.cadence,
-            fill_value=args.fill_value,
-            datasets=args.datasets,
-            include_noaa=not args.no_noaa,
-            include_cdaw=not args.no_cdaw,
-            include_donki=not args.no_donki,
-            donki_api_key=args.donki_api_key,
-        )
-        print(f"[DONE] Raw catalog: {result.raw_catalog_path}")
-        print(f"[DONE] Merged catalog: {result.merged_catalog_path}")
-        print(f"[DONE] Samples: {result.samples_path}")
-        if result.dataset_path:
-            print(f"[DONE] Dataset: {result.dataset_path}")
+        from .compatible_builder import build_compatible_dataset
+        result = build_compatible_dataset(end_date=args.end_date, extension_start=args.extension_start,
+                                          outdir=args.outdir, cache_dir=args.cache_dir, baseline_dir=args.baseline_dir)
+        print(f"[DONE] Ten feature files in {args.outdir}; {result['total_rows_per_feature']} samples each.", flush=True)
+        print(f"[REPORT] {args.outdir}/availability_report.txt", flush=True)
     elif args.command == "plot":
-        from .analysis import run_plots
-
-        outputs = run_plots(args.dataset_csv, args.outdir)
-        for name, path in outputs.items():
-            print(f"[DONE] {name}: {path}")
+        from .compatible_figures import FEATURES, run_compatible_figures
+        run_compatible_figures(args.dataset_dir, args.outdir, bands=args.bands,
+                               features=args.features or FEATURES, tsne=args.tsne,
+                               tsne_max_samples=args.tsne_max_samples)
+        print(f"[DONE] Figures and numerical tables: {args.outdir}", flush=True)
+    else:
+        from .compatible_builder import validate_dataset
+        print(json.dumps(validate_dataset(args.dataset_dir), indent=2))
 
 
 if __name__ == "__main__":

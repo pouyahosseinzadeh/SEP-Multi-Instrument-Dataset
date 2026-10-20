@@ -1,6 +1,10 @@
 data/cache/
 data/processed/
 reports/figures/
+reports/figures_*/
+.venv/
+logs/
+*.part
 __pycache__/
 .pytest_cache/
 *.pyc
