@@ -1,4 +1,5 @@
 import json
+import hashlib
 from types import SimpleNamespace
 
 import numpy as np
@@ -7,7 +8,7 @@ import pytest
 import requests
 
 from sep_dataset.compatible_sources import (
-    FEATURES, INTEGRAL_COLUMNS, LEGACY_END, CompatibleSourceStore,
+    FEATURES, INTEGRAL_COLUMNS, ISWA, LEGACY_END, CompatibleSourceStore,
     SourceDataError, parse_legacy_goes, parse_noaa_csv,
 )
 
@@ -190,3 +191,156 @@ def test_tampered_or_interrupted_parsed_cache_is_rebuilt_with_provenance(tmp_pat
     assert third.range("P6", "2025-01-01", "2025-01-02").isna().all()
     assert json.loads(manifest.read_text())["parsed_sha256"]
     assert not list((tmp_path / "parsed").glob("*.part"))
+
+
+NO_DATA_PAYLOAD = {"HAPI": "2.0", "status": {"code": 1406, "message": "No data available for the specified ID and time range"}, "data": []}
+XRS_METADATA = {"parameters": [
+    {"name": "Time", "type": "isotime"},
+    {"name": "Short_Wave", "type": "double", "fill": "0", "units": "W/m^2"},
+    {"name": "Long_Wave", "type": "double", "fill": "0", "units": "W/m^2"},
+    {"name": "satellite", "type": "string"},
+]}
+
+
+def _http_response(status, body, url="https://example.test/hapi/data"):
+    response = requests.Response()
+    response.status_code = status
+    response._content = body if isinstance(body, bytes) else json.dumps(body).encode()
+    response.url = url
+    return response
+
+
+def test_actual_iswa_404_no_data_returns_typed_empty_and_caches_provenance(tmp_path, monkeypatch):
+    requests_made = []
+
+    def get(url, params=None, **kwargs):
+        requests_made.append((url, params))
+        if url.endswith("/info"):
+            return _http_response(200, XRS_METADATA, url)
+        return _http_response(404, NO_DATA_PAYLOAD, url)
+
+    monkeypatch.setattr(requests, "get", get)
+    store = CompatibleSourceStore(tmp_path, retries=1, progress=None)
+    start, stop = pd.Timestamp("2014-12-31T23:55Z"), pd.Timestamp("2015-01-01T00:00Z")
+    wanted = ["Short_Wave", "Long_Wave", "satellite"]
+    frame = store._hapi(ISWA, "goesp_xray_flux_P1M", wanted, start, stop)
+    assert frame.empty
+    assert frame.columns.tolist() == wanted
+    assert isinstance(frame.index, pd.DatetimeIndex)
+    assert str(frame.index.tz) == "UTC"
+    assert pd.api.types.is_numeric_dtype(frame.Short_Wave)
+    assert pd.api.types.is_numeric_dtype(frame.Long_Wave)
+    assert not pd.api.types.is_numeric_dtype(frame.satellite)
+    body = json.dumps(NO_DATA_PAYLOAD).encode()
+    assert any(p.read_bytes() == body for p in (tmp_path / "raw").iterdir())
+    records = [r for r in store.source_records if r.get("dataset") == "goesp_xray_flux_P1M"]
+    assert records
+    assert records[-1]["query"]["time.min"] == "2014-12-31T23:55:00Z"
+    assert records[-1]["sha256"] == hashlib.sha256(body).hexdigest()
+    before = len(requests_made)
+    assert store._hapi(ISWA, "goesp_xray_flux_P1M", wanted, start, stop).empty
+    assert len(requests_made) == before
+
+
+def test_31_day_xrs_chunk_plus_actual_empty_remainder_keeps_valid_measurements(tmp_path, monkeypatch):
+    requested_chunks = []
+
+    def get(url, params=None, **kwargs):
+        if url.endswith("/info"):
+            return _http_response(200, XRS_METADATA, url)
+        requested_chunks.append(params)
+        if params["time.min"] == "2014-12-31T23:55:00Z":
+            return _http_response(404, NO_DATA_PAYLOAD, url)
+        return _http_response(200, b"2014-12-01T00:00:00Z,1e-8,2e-7,GOES-15\n2014-12-31T23:54:00Z,3e-8,4e-7,GOES-15\n", url)
+
+    monkeypatch.setattr(requests, "get", get)
+    store = CompatibleSourceStore(tmp_path, retries=1, progress=None)
+    frame = store._hapi(ISWA, "goesp_xray_flux_P1M", ["Short_Wave", "Long_Wave", "satellite"], pd.Timestamp("2014-11-30T23:55Z"), pd.Timestamp("2015-01-01T00:00Z"))
+    assert len(requested_chunks) == 2
+    assert frame.index.tolist() == [pd.Timestamp("2014-12-01T00:00Z"), pd.Timestamp("2014-12-31T23:54Z")]
+    np.testing.assert_array_equal(frame.Short_Wave, [1e-8, 3e-8])
+    assert not frame.index.has_duplicates
+    assert frame.satellite.tolist() == ["GOES-15", "GOES-15"]
+
+
+def test_entire_empty_xrs_month_becomes_audited_nan_grid_not_failed_build(tmp_path, monkeypatch):
+    def get(url, params=None, **kwargs):
+        return _http_response(200, XRS_METADATA, url) if url.endswith("/info") else _http_response(404, NO_DATA_PAYLOAD, url)
+
+    monkeypatch.setattr(requests, "get", get)
+    store = CompatibleSourceStore(tmp_path, retries=1, progress=None)
+    frame = store._load_month("xrs", pd.Timestamp("2014-12-01T00:00Z"))
+    assert len(frame) == 31 * 288
+    assert frame[["Xs", "Xl"]].isna().all().all()
+    assert str(frame.index.tz) == "UTC"
+    quality = store.quality_range("Xs", "2014-12-31T23:55Z", "2015-01-01T00:00Z")
+    assert quality.measurement_missing.all()
+    assert not quality.channel_status.eq("outside_original_channel_coverage").any()
+    assert store.source_records
+
+
+@pytest.mark.parametrize("http_status,payload", [
+    (404, {"HAPI": "2.0", "status": {"code": 1406, "message": "Unknown dataset ID"}, "data": []}),
+    (401, NO_DATA_PAYLOAD),
+    (403, NO_DATA_PAYLOAD),
+    (500, {"HAPI": "2.0", "status": {"code": 1201, "message": "OK - no data for time range"}, "data": []}),
+    (404, {"HAPI": "2.0", "status": {"code": 1406, "message": "No data available for the specified ID and time range"}}),
+    (404, {"HAPI": "2.0", "status": {"code": 1406, "message": "No data available for the specified ID and time range"}, "data": [123]}),
+])
+def test_unknown_id_auth_and_malformed_no_data_still_fail_without_cache(tmp_path, monkeypatch, http_status, payload):
+    monkeypatch.setattr(requests, "get", lambda url, **kwargs: _http_response(http_status, payload, url))
+    store = CompatibleSourceStore(tmp_path, retries=1, progress=None)
+    with pytest.raises(SourceDataError):
+        store._download(ISWA + "/data", {"id": "unknown"}, kind="hapi_csv")
+    assert not (tmp_path / "raw").exists()
+
+
+def test_iswa_nonstandard_404_exception_is_not_applied_to_other_servers(tmp_path, monkeypatch):
+    monkeypatch.setattr(requests, "get", lambda url, **kwargs: _http_response(404, NO_DATA_PAYLOAD, url))
+    store = CompatibleSourceStore(tmp_path, retries=1, progress=None)
+    with pytest.raises(SourceDataError):
+        store._download("https://other-hapi.example.test/data", kind="hapi_csv")
+    assert not (tmp_path / "raw").exists()
+
+
+@pytest.mark.parametrize("body", [
+    b"",
+    json.dumps({"HAPI": "2.0", "status": {"code": 1200, "message": "OK"}, "data": []}).encode(),
+    json.dumps({"HAPI": "2.0", "status": {"code": 1201, "message": "OK - no data for time range"}, "data": []}).encode(),
+])
+def test_standard_hapi_empty_intervals_are_supported_on_other_servers(tmp_path, monkeypatch, body):
+    def get(url, **kwargs):
+        return _http_response(200, XRS_METADATA if url.endswith("/info") else body, url)
+
+    monkeypatch.setattr(requests, "get", get)
+    store = CompatibleSourceStore(tmp_path, retries=1, progress=None)
+    frame = store._hapi("https://example.test/hapi", "fixture", ["Short_Wave", "Long_Wave", "satellite"], pd.Timestamp("2014-12-31T23:55Z"), pd.Timestamp("2015-01-01T00:00Z"))
+    assert frame.empty
+    assert str(frame.index.tz) == "UTC"
+    assert store.source_records[-1]["source_status"] == "no_data_available"
+
+
+def test_integral_no_data_never_creates_false_nsep_labels(tmp_path, monkeypatch):
+    from sep_dataset.compatible_catalogs import label_flare_events, parse_hek_flares
+
+    metadata = {"parameters": [{"name": "Time", "type": "isotime"}] + [
+        {"name": f"P{energy}", "type": "double", "fill": "-100000", "units": "pfu"}
+        for energy in (5, 10, 30, 60, 100)
+    ] + [{"name": "satelliteProton", "type": "string"}]}
+
+    def get(url, params=None, **kwargs):
+        return _http_response(200, metadata, url) if url.endswith("/info") else _http_response(404, NO_DATA_PAYLOAD, url)
+
+    monkeypatch.setattr(requests, "get", get)
+    store = CompatibleSourceStore(tmp_path, retries=1, progress=None)
+    flux = store.integral_range("2025-01-01", "2025-01-04")
+    assert flux[list(INTEGRAL_COLUMNS)].isna().all().all()
+    flares = parse_hek_flares([{
+        "frm_name": "SWPC", "obs_observatory": "GOES", "event_starttime": "2025-01-02T00:00:00",
+        "event_peaktime": "2025-01-02T00:00:00", "event_endtime": "2025-01-02T00:00:00",
+        "fl_goescls": "C1.0", "kb_archivid": "fixture-unknown-label",
+    }])
+    labels, audit = label_flare_events(flares, flux)
+    assert labels.empty
+    assert audit.event_type.isna().all()
+    assert audit.status.tolist() == ["excluded_missing_label_flux"]

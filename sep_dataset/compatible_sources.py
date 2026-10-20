@@ -36,6 +36,35 @@ class SourceDataError(RuntimeError):
     """An expected source could not be downloaded or validated."""
 
 
+def _hapi_no_data(body: bytes, url: str, http_status: int | None = None) -> dict | None:
+    """Recognize genuine empty intervals, never a generic 404 or other failure.
+
+    HAPI permits an empty HTTP-200 CSV or a JSON 1200/1201 empty data array.
+    ISWA additionally uses HTTP 404/code 1406 with the exact no-data message
+    below, although standard HAPI reserves 1406 for an unknown dataset. Only
+    that specific ISWA response is accepted; unknown IDs and HTTP errors fail.
+    The caller validates the dataset metadata before requesting its data.
+    """
+    if not body.strip():
+        return {"code": 1201, "message": "Empty HAPI CSV interval"} if http_status in (None, 200) else None
+    try:
+        payload = json.loads(body.decode("utf-8-sig"))
+    except (ValueError, UnicodeError):
+        return None
+    if not isinstance(payload, dict) or not isinstance(payload.get("HAPI"), str) or payload.get("data") != []:
+        return None
+    status = payload.get("status")
+    if not isinstance(status, dict):
+        return None
+    if http_status in (None, 200) and status.get("code") in (1200, 1201):
+        return status
+    if (url == ISWA + "/data" and http_status in (None, 404)
+            and status.get("code") == 1406
+            and str(status.get("message", "")).strip() == "No data available for the specified ID and time range"):
+        return status
+    return None
+
+
 def _utc(value: object) -> pd.Timestamp:
     return pd.Timestamp(value).tz_localize("UTC") if pd.Timestamp(value).tzinfo is None else pd.Timestamp(value).tz_convert("UTC")
 
@@ -336,6 +365,15 @@ class CompatibleSourceStore:
         selected = [p["name"] for p in info["parameters"] if p["name"] in wanted]
         params = {"id": dataset, "parameters": ",".join(selected), "time.min": start.strftime("%Y-%m-%dT%H:%M:%SZ"), "time.max": stop.strftime("%Y-%m-%dT%H:%M:%SZ"), "format": "csv"}
         body = self._download(server + "/data", params, kind="hapi_csv")
+        gap = _hapi_no_data(body, server + "/data")
+        provenance = {"url": server + "/data", "query": params, "sha256": hashlib.sha256(body).hexdigest(), "dataset": dataset, "metadata_coverage_start": info.get("startDate"), "metadata_coverage_stop": info.get("stopDate"), "parameters": {k: {a: metadata[k].get(a) for a in ("units", "fill", "description")} for k in selected}}
+        if gap is not None:
+            index = pd.DatetimeIndex([], tz="UTC", name="Time")
+            frame = pd.DataFrame({name: pd.Series(index=index, dtype="object" if metadata[name].get("type") == "string" else "float64") for name in selected}, index=index)
+            self._record({**provenance, "source_status": "no_data_available", "hapi_status": gap})
+            if self.progress:
+                self.progress(f"[SOURCE GAP] {dataset} {params['time.min']} through {params['time.max']}: {gap.get('message', 'No data available')}")
+            return frame
         frame = pd.read_csv(StringIO(body.decode("utf-8-sig")), header=None)
         if frame.empty or frame.shape[1] != len(selected) + 1:
             raise SourceDataError(f"HAPI {dataset} invalid column count or empty data")
@@ -350,7 +388,7 @@ class CompatibleSourceStore:
                 frame[name] = _numeric(frame[name], metadata[name].get("fill"))
                 if dataset != "OMNI_HRO2_5MIN":
                     frame[name] = frame[name].mask(frame[name] < 0)
-        self._record({"url": server + "/data", "query": params, "sha256": hashlib.sha256(body).hexdigest(), "dataset": dataset, "metadata_coverage_start": info.get("startDate"), "metadata_coverage_stop": info.get("stopDate"), "parameters": {k: {a: metadata[k].get(a) for a in ("units", "fill", "description")} for k in selected}})
+        self._record(provenance)
         return frame
 
     def _download(self, url: str, params: dict | None = None, *, kind: str) -> bytes:
@@ -362,18 +400,20 @@ class CompatibleSourceStore:
         for attempt in range(self.retries):
             try:
                 response = requests.get(url, params=params, timeout=(20, self.timeout))
-                try:
-                    response.raise_for_status()
-                except requests.HTTPError as exc:
-                    raise SourceDataError(f"{exc}: {response.text[:240]}") from exc
                 body = response.content
+                gap = _hapi_no_data(body, url, getattr(response, "status_code", 200)) if kind == "hapi_csv" else None
+                if gap is None:
+                    try:
+                        response.raise_for_status()
+                    except requests.HTTPError as exc:
+                        raise SourceDataError(f"{exc}: {response.text[:240]}") from exc
                 text = body.decode("utf-8-sig")
                 if kind == "json":
                     payload = json.loads(text)
                     if "parameters" not in payload:
                         raise SourceDataError(f"Invalid HAPI metadata: {text[:200]}")
                 elif kind == "hapi_csv":
-                    if not re.match(r"^\s*\d{4}-\d{2}-\d{2}T", text):
+                    if gap is None and not re.match(r"^\s*\d{4}-\d{2}-\d{2}T", text):
                         raise SourceDataError(f"Invalid HAPI CSV: {text[:200]}")
                 elif "time_tag," not in text or "<html" in text[:500].lower():
                     raise SourceDataError("Invalid NOAA legacy CSV response")

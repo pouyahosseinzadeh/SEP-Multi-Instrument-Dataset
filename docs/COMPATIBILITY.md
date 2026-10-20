@@ -61,6 +61,8 @@ After-filling completeness is not original observational coverage. Prefill summa
 
 Downloads and compatible completed feature checkpoints are reused on rerun. Validation checks ten schemas, identical metadata/order, historical preservation, checksums, masks and structural absence. A completed build may include reported unavailability; it does not simulate measurements to hide those limitations.
 
+An explicitly empty HAPI interval is recorded as an observational gap, including an empty trailing chunk when a request is split at the server's 31-day limit. HAPI's HTTP-200 empty responses and status 1200/1201 empty arrays are supported. ISWA also returns HTTP 404/status 1406 with the exact message `No data available for the specified ID and time range`; only that specific ISWA response is treated as a gap after validating dataset metadata. Unknown dataset IDs, authentication failures, malformed responses and other download errors still stop the build. Empty intervals retain query/checksum provenance, become missing observations on the five-minute grid, and follow the documented filling/masking policy. Missing integral flux never creates a negative label.
+
 ## Figure compatibility
 
 The original comparisons use `event_type == 1` and `sep_peak_2 >= 10` for >10 MeV. The >30, >60 and >100 MeV comparisons use `sep_peak_3`, `sep_peak_4`, `sep_peak_5 >= 5` respectively. Controls are all `event_type == 0` flare rows. The energy inequality denotes the integral channel; its peak threshold is in pfu.
