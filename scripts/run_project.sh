@@ -4,19 +4,21 @@ set -euo pipefail
 PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 SEP_VENV_PATH="${SEP_VENV_DIR:-$PROJECT_DIR/.venv}"
 END_DATE="2025-12-31"
-DATASET_DIR="data/processed/compatible_1998_2025"
-FIGURE_DIR="reports/figures_1998_2025"
+DATASET_DIR="data/processed/enhanced_1998_2025"
+LEGACY_DIR="data/processed/compatible_1998_2025"
+FIGURE_DIR="reports/figures_enhanced_1998_2025"
 BASELINE_DIR=""
 INCLUDE_TSNE=0
 usage() {
-  printf 'Usage: bash scripts/run_project.sh [--baseline-dir PATH] [--end-date YYYY-MM-DD] [--outdir PATH] [--figure-outdir PATH] [--tsne]\n'
+  printf 'Usage: bash scripts/run_project.sh [--baseline-dir PATH] [--legacy-dir PATH] [--end-date YYYY-MM-DD] [--outdir PATH] [--figure-outdir PATH] [--tsne]\n'
 }
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --baseline-dir|--end-date|--outdir|--figure-outdir)
+    --baseline-dir|--legacy-dir|--end-date|--outdir|--figure-outdir)
       if [[ $# -lt 2 || -z "$2" ]]; then usage >&2; exit 2; fi
       case "$1" in
         --baseline-dir) BASELINE_DIR="$2" ;;
+        --legacy-dir) LEGACY_DIR="$2" ;;
         --end-date) END_DATE="$2" ;;
         --outdir) DATASET_DIR="$2" ;;
         --figure-outdir) FIGURE_DIR="$2" ;;
@@ -34,7 +36,7 @@ fi
 cd "$PROJECT_DIR"
 mkdir -p logs
 RUN_STAMP="$(date -u '+%Y%m%dT%H%M%SZ')"
-BUILD_ARGS=(-u -m sep_dataset.cli build --end-date "$END_DATE" --outdir "$DATASET_DIR")
+BUILD_ARGS=(-u -m sep_dataset.cli build --end-date "$END_DATE" --legacy-dir "$LEGACY_DIR" --outdir "$DATASET_DIR")
 if [[ -n "$BASELINE_DIR" ]]; then BUILD_ARGS+=(--baseline-dir "$BASELINE_DIR"); fi
 PLOT_ARGS=(-u -m sep_dataset.cli plot --dataset-dir "$DATASET_DIR" --outdir "$FIGURE_DIR")
 if [[ "$INCLUDE_TSNE" == 1 ]]; then PLOT_ARGS+=(--tsne); fi

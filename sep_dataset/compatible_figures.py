@@ -19,14 +19,16 @@ from scipy.stats import ttest_ind
 
 
 FEATURES = ("Vx", "flow_speed", "proton_density", "T", "F", "Xs", "Xl", "P4", "P5", "P6")
+EXTRA_FEATURES = ("USFLUXL", "R_VALUE")
 DISPLAY_NAMES = {
     "Vx": "Vx", "flow_speed": "FlowSpeed", "proton_density": "ProtonDensity",
     "T": "ProtonTemp", "F": "F", "Xs": "Xs", "Xl": "Xl", "P4": "P4", "P5": "P5", "P6": "P6",
+    "USFLUXL": "USFLUXL", "R_VALUE": "R_VALUE",
 }
 UNITS = {"Vx": "km/s", "flow_speed": "km/s", "proton_density": "cm$^{-3}$",
          "T": "K", "F": "nT", "Xs": "W/m$^2$", "Xl": "W/m$^2$",
          "P4": "protons/(cm$^2$ s sr MeV)", "P5": "protons/(cm$^2$ s sr MeV)",
-         "P6": "protons/(cm$^2$ s sr MeV)"}
+         "P6": "protons/(cm$^2$ s sr MeV)", "USFLUXL": "Mx", "R_VALUE": "native log R index"}
 # Verified against the original notebook AND its four exported summary tables.
 BAND_SELECTION = {10: ("sep_peak_2", 10.0), 30: ("sep_peak_3", 5.0),
                   60: ("sep_peak_4", 5.0), 100: ("sep_peak_5", 5.0)}
@@ -178,6 +180,12 @@ def _save(fig, base: Path, plt, artifacts: list) -> None:
     plt.close(fig)
 
 
+def _source_note(fig, table):
+    note = table.attrs.get("source_note", "")
+    if note:
+        fig.suptitle(note, fontsize=8)
+
+
 def _plot_profile(stats: pd.DataFrame, feature: str, band: int, outdir: Path, plt, artifacts: list) -> None:
     x = stats["hours_before_aligned_flare"].to_numpy()
     fig, ax = plt.subplots(figsize=(9, 5))
@@ -197,6 +205,7 @@ def _plot_profile(stats: pd.DataFrame, feature: str, band: int, outdir: Path, pl
     ax.grid(alpha=0.25)
     ax.legend(fontsize=8, frameon=False, loc="best")
     fig.text(0.5, 0.005, "Pointwise CIs; BH correction across 288 tests within this feature and energy band.", ha="center", fontsize=8)
+    _source_note(fig, stats)
     _save(fig, outdir / "curves_{}_gt{}".format(DISPLAY_NAMES[feature], band), plt, artifacts)
 
 
@@ -221,6 +230,7 @@ def _plot_examples(frame: pd.DataFrame, values: np.ndarray, sep_mask: np.ndarray
                      "FlrOnset": frame.iloc[row]["FlrOnset"], "selection": "first complete post-2013 row, or first complete baseline row if unavailable"})
     axes[-1].set(xlim=(24, 0), xlabel="Hours before 5-minute aligned FlrOnset")
     pd.DataFrame(rows).to_csv(outdir / (DISPLAY_NAMES[feature] + "_example_windows.csv"), index=False)
+    _source_note(fig, frame)
     _save(fig, outdir / "{}_sample24h_gt{}_MeV".format(DISPLAY_NAMES[feature], band), plt, artifacts)
 
 
@@ -250,6 +260,7 @@ def _plot_pca(pca: dict, labels: np.ndarray, metadata: pd.DataFrame, feature: st
     ax.set(xlabel="Principal component", ylabel="Explained variance ratio", ylim=(0, 1.03),
            title="{}: full 288-point PCA, >{} MeV selection".format(name, band))
     ax.legend(frameon=False)
+    _source_note(fig, metadata)
     _save(fig, outdir / (name + "_pca_scree"), plt, artifacts)
     if len(variance) >= 2:
         fig, ax = plt.subplots(figsize=(7, 5))
@@ -260,11 +271,13 @@ def _plot_pca(pca: dict, labels: np.ndarray, metadata: pd.DataFrame, feature: st
         ax.set(xlabel="PC1 ({:.2%})".format(variance[0]), ylabel="PC2 ({:.2%})".format(variance[1]),
                title="{}: PCA of complete time series".format(name))
         ax.legend(frameon=False)
+        _source_note(fig, metadata)
         _save(fig, outdir / (name + "_pca_scatter_pc1_pc2"), plt, artifacts)
     fig, ax = plt.subplots(figsize=(10, 4.5))
     im = ax.imshow(pca["components"], aspect="auto", cmap="coolwarm", extent=[24, 0, len(variance)+0.5, 0.5])
     ax.set(xlabel="Hours before aligned FlrOnset", ylabel="Principal component", title=name + ": PCA component weights")
     fig.colorbar(im, ax=ax, label="Component weight (eigenvector coefficient)")
+    _source_note(fig, metadata)
     _save(fig, outdir / (name + "_pca_loadings_heatmap"), plt, artifacts)
 
 
@@ -441,7 +454,7 @@ def run_compatible_figures(dataset_dir, outdir, bands: Sequence[int] = (10, 30, 
     bands, features = tuple(int(b) for b in bands), tuple(features)
     if not bands or len(set(bands)) != len(bands) or any(b not in BAND_SELECTION for b in bands):
         raise ValueError("Choose distinct bands from 10, 30, 60 and 100")
-    if not features or len(set(features)) != len(features) or any(f not in FEATURES for f in features):
+    if not features or len(set(features)) != len(features) or any(f not in FEATURES + EXTRA_FEATURES for f in features):
         raise ValueError("Unknown, empty or duplicate feature selection")
     if tsne_max_samples and tsne_max_samples < 4:
         raise ValueError("tsne_max_samples must be zero (all samples) or at least four")
@@ -466,9 +479,19 @@ def run_compatible_figures(dataset_dir, outdir, bands: Sequence[int] = (10, 30, 
         "pca": "all 288 time columns standardized by combined selected SEP+NSEP mean and population SD; exact covariance eigenvectors; no extra imputation; first ten PCs",
         "features": {}, "warnings": [], "tsne_enabled": bool(tsne),
     }
+    dataset_manifest_path = dataset_dir / "dataset_manifest.json"
+    dataset_manifest = json.loads(dataset_manifest_path.read_text()) if dataset_manifest_path.exists() else {}
+    enhanced = dataset_manifest.get("workflow") == "enhanced_twelve_feature_research_release"
+    manifest["input_workflow"] = dataset_manifest.get("workflow", "original_or_external")
     for feature, path in paths.items():
         print("[FIGURES] {}: reading {}".format(feature, path.name), flush=True)
         frame, x = _read_feature(path, feature)
+        note = ""
+        if enhanced and feature in ("P4", "P5", "P6"):
+            note = "Legacy measurements + flagged SGPS reference-energy estimates; detector responses differ"
+        elif enhanced and feature in EXTRA_FEATURES:
+            note = "Native MDI/HMI active-region patch values; five-minute grid includes bounded holds"
+        frame.attrs["source_note"] = note
         audit_path = dataset_dir / "quality" / (feature + "_quality.csv")
         row_audit = None
         if audit_path.exists():
@@ -527,6 +550,9 @@ def run_compatible_figures(dataset_dir, outdir, bands: Sequence[int] = (10, 30, 
                 print("[WARN] " + message, flush=True)
                 continue
             stats = profile_statistics(x[sep_mask], x[nsep_mask], feature, band)
+            stats.attrs["source_note"] = note
+            if note:
+                stats["source_definition_note"] = note
             stats.to_csv(band_dir / (DISPLAY_NAMES[feature] + "_profile_statistics.csv"), index=False)
             effects[band][feature] = stats
             _plot_profile(stats, feature, band, band_dir, plt, artifacts)
