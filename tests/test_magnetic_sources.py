@@ -207,3 +207,77 @@ def test_historical_four_digit_region_expands_only_with_native_confirmation(tmp_
     assert q.loc[s.notna(),'association_noaa_ar'].eq(11775).all()
     missing,_=store.window('R_VALUE','2013-01-02T00:00:00Z',1776)
     assert missing.isna().all()
+
+
+@pytest.mark.parametrize("empty_fields", [{}, {"keywords": None}, {"keywords": []}], ids=["omitted", "null", "empty-array"])
+def test_confirmed_zero_record_response_retains_empty_native_schema(empty_fields):
+    payload = {"status": 0, "count": 0, "runtime": 0.02, **empty_fields}
+    frame = ms.parse_keyword_payload(payload, ms.SMARP)
+    assert frame.empty
+    assert set(frame.columns) == set(record(spec=ms.SMARP))
+    normalized = ms.normalize_native(frame, ms.SMARP)
+    assert normalized.empty
+    assert str(normalized.record_time.dtype) == "datetime64[ns, UTC]"
+
+
+@pytest.mark.parametrize("fields", [
+    {"count": 0, "keywords": {}},
+    {"count": 0, "keywords": ""},
+    {"count": 1},
+    {"count": False},
+    {"count": "0"},
+    {"count": 0.0},
+    {},
+], ids=["malformed-object", "malformed-string", "missing-positive-arrays", "boolean-count", "string-count", "float-count", "missing-count"])
+def test_ambiguous_or_malformed_response_is_not_relabelled_as_empty(fields):
+    with pytest.raises(ms.MagneticSourceError):
+        ms.parse_keyword_payload({"status": 0, **fields}, ms.SMARP)
+
+
+def test_empty_week_between_populated_weeks_preserves_only_real_native_records(tmp_path, monkeypatch):
+    store = ms.MagneticStore(tmp_path, progress=None)
+    requested = []
+
+    def request(params):
+        if params["op"] == "series_struct":
+            return {"status": 0, "keywords": [{"name": name} for name in record(spec=ms.SMARP)]}
+        low, high = params["ds"].split("[][")[1].rstrip("]").split("-")
+        requested.append((low, high))
+        if len(requested) == 2:
+            return {"status": 0, "count": 0, "runtime": 0.02}
+        row = record(low, ar=8124, members="8124", spec=ms.SMARP)
+        return {"status": 0, "count": 1, "keywords": [{"name": name, "values": [value]} for name, value in row.items()]}
+
+    monkeypatch.setattr(store, "_request", request)
+    frame = store._fetch(ms.SMARP, pd.Timestamp("1998-01-01T00:00Z"), pd.Timestamp("1998-01-22T00:00Z"))
+    assert len(requested) == 3
+    assert frame.T_REC.tolist() == [requested[0][0], requested[2][0]]
+    assert frame.USFLUXL.eq(1e22).all()
+    assert frame.R_VALUE.eq(3.5).all()
+
+
+def test_empty_month_marks_both_features_missing_and_reuses_raw_cache(tmp_path, monkeypatch):
+    requests = []
+
+    def get(url, *, params, timeout):
+        requests.append(params.copy())
+        payload = ({"status": 0, "keywords": [{"name": name} for name in record(spec=ms.SMARP)]}
+                   if params["op"] == "series_struct" else {"status": 0, "count": 0, "runtime": 0.02})
+        return SimpleNamespace(content=json.dumps(payload).encode(), raise_for_status=lambda: None)
+
+    monkeypatch.setattr(ms.requests, "get", get)
+    store = ms.MagneticStore(tmp_path, progress=None)
+    for feature in ms.FEATURES:
+        values, quality = store.window(feature, "1998-07-15T00:00Z", 8124)
+        assert len(values) == len(quality) == 288
+        assert values.isna().all()
+        assert quality.point_status.eq("G").all()
+        assert quality.reason.eq("no_matching_native_record").all()
+    records = [item for item in store.source_records if "native_records" in item]
+    assert len(records) == 1 and records[0]["native_records"] == 0
+    first_request_count = len(requests)
+    assert first_request_count > 1
+    resumed = ms.MagneticStore(tmp_path, progress=None)
+    values, quality = resumed.window("USFLUXL", "1998-07-15T00:00Z", 8124)
+    assert values.isna().all() and quality.point_status.eq("G").all()
+    assert len(requests) == first_request_count

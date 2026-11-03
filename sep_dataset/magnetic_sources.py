@@ -110,13 +110,19 @@ def _members(value, primary) -> tuple[int, ...]:
 def parse_keyword_payload(payload: dict, spec: NativeSpec) -> pd.DataFrame:
     if not isinstance(payload, dict) or payload.get("status") != 0:
         raise MagneticSourceError(f"JSOC {spec.series}: {str(payload)[:250]}")
-    keywords = payload.get("keywords")
-    if not isinstance(keywords, list):
-        raise MagneticSourceError(f"JSOC {spec.series} lacks keyword arrays")
-    columns = {entry.get("name"): entry.get("values") for entry in keywords if isinstance(entry, dict)}
     required = {"T_REC", "T_OBS", spec.patch_key, "NOAA_AR", "NOAA_ARS", "QUALITY", *FEATURES}
-    if payload.get("count") == 0 and keywords == []:
+    count = payload.get("count")
+    if type(count) is not int or count < 0:
+        raise MagneticSourceError(f"JSOC {spec.series} lacks a valid record count; response keys: {sorted(payload)}")
+    keywords = payload.get("keywords")
+    # rs_list omits keyword arrays for successful zero-record queries, including
+    # historical SMARP archive gaps. Only an explicit zero count establishes an
+    # empty result; malformed or failed requests must not become missing data.
+    if count == 0 and (keywords is None or keywords == []):
         return pd.DataFrame(columns=sorted(required))
+    if not isinstance(keywords, list):
+        raise MagneticSourceError(f"JSOC {spec.series} lacks keyword arrays (count={count}; response keys: {sorted(payload)})")
+    columns = {entry.get("name"): entry.get("values") for entry in keywords if isinstance(entry, dict)}
     if not required.issubset(columns):
         raise MagneticSourceError(f"JSOC {spec.series} missing keywords: {sorted(required-set(columns))}")
     sizes = {len(value) for value in columns.values() if isinstance(value, list)}
@@ -275,6 +281,8 @@ class MagneticStore:
                     raise
                 middle = (low + (high-low)/2).floor("s")
                 return pd.concat([query(low, middle), query(middle, high)], ignore_index=True)
+            except MagneticSourceError as exc:
+                raise MagneticSourceError(f"{exc}; query range: {low.isoformat()} through {high.isoformat()}") from exc
         chunks = []
         cursor = start
         while cursor < stop:
