@@ -6,7 +6,8 @@ from pathlib import Path
 
 LEGACY_DIR = "data/processed/compatible_1998_2025"
 ENHANCED_DIR = "data/processed/enhanced_1998_2025"
-FIGURE_DIR = "reports/figures_enhanced_1998_2025"
+CLEANED_DIR = "data/processed/cleaned_1998_2025"
+FIGURE_DIR = "reports/figures_cleaned_1998_2025"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -21,14 +22,19 @@ def build_parser() -> argparse.ArgumentParser:
     build.add_argument("--enhanced-cache-dir", default="data/cache/enhanced")
     build.add_argument("--baseline-dir", help="Optional folder containing your ten original historical files.")
     build.add_argument("--magnetic-csv", help="Optional native JSOC keyword CSV for offline magnetic collection; see docs/ENHANCED_DATASET.md.")
+    build.add_argument("--clean-outdir", default=CLEANED_DIR, help="Final interpolated, aligned twelve-feature output directory.")
     build.add_argument("--legacy-only", action="store_true", help="Run only the unchanged original ten-feature pipeline.")
     enhance = sub.add_parser("enhance", help="Reuse an already completed original build and collect only the new data.")
     enhance.add_argument("--legacy-dir", default=LEGACY_DIR)
     enhance.add_argument("--outdir", default=ENHANCED_DIR)
     enhance.add_argument("--cache-dir", default="data/cache/enhanced")
     enhance.add_argument("--magnetic-csv")
+    enhance.add_argument("--clean-outdir", default=CLEANED_DIR)
+    clean = sub.add_parser("clean", help="Offline: interpolate partial feature rows and globally remove samples with an entirely unavailable feature.")
+    clean.add_argument("--dataset-dir", default=ENHANCED_DIR)
+    clean.add_argument("--outdir", default=CLEANED_DIR)
     plot = sub.add_parser("plot", help="Original time-series/PCA figures plus new correlations, distributions and coverage diagnostics.")
-    plot.add_argument("--dataset-dir", default=ENHANCED_DIR)
+    plot.add_argument("--dataset-dir", default=CLEANED_DIR)
     plot.add_argument("--outdir", default=FIGURE_DIR)
     plot.add_argument("--bands", nargs="+", type=int, choices=[10, 30, 60, 100], default=[10, 30, 60, 100])
     plot.add_argument("--features", nargs="+", choices=["Vx", "flow_speed", "proton_density", "T", "F", "Xs", "Xl", "P4", "P5", "P6", "USFLUXL", "R_VALUE"])
@@ -36,29 +42,49 @@ def build_parser() -> argparse.ArgumentParser:
     plot.add_argument("--tsne-max-samples", type=int, default=3000)
     plot.add_argument("--original-figures-only", action="store_true")
     paper = sub.add_parser("paper-plot", help="Run only the new publication diagnostics, including correlations.")
-    paper.add_argument("--dataset-dir", default=ENHANCED_DIR)
+    paper.add_argument("--dataset-dir", default=CLEANED_DIR)
     paper.add_argument("--outdir", default=FIGURE_DIR + "/paper")
     valid = sub.add_parser("validate", help="Verify all files, exact sample alignment, checksums and per-point quality masks.")
-    valid.add_argument("--dataset-dir", default=ENHANCED_DIR)
+    valid.add_argument("--dataset-dir", default=CLEANED_DIR)
     return parser
 
 
-def _enhance(legacy_dir, outdir, cache_dir, magnetic_csv=None):
-    from .enhanced_builder import enhance_dataset
-    result = enhance_dataset(legacy_dir, outdir=outdir, cache_dir=cache_dir, magnetic_csv=magnetic_csv)
-    print(f"[DONE] Twelve enhanced feature files: {outdir}; {result['total_rows_per_feature']} samples each.", flush=True)
+def _clean(dataset_dir, outdir=CLEANED_DIR):
+    from .cleaned_builder import clean_dataset
+    result = clean_dataset(dataset_dir, outdir=outdir)
+    print(f"[DONE] Twelve cleaned feature files: {outdir}; {result['total_rows_per_feature']} aligned samples each; no missing feature values.", flush=True)
     print(f"[REPORT] {outdir}/availability_report.txt", flush=True)
     return result
 
 
-def _completed_manifest(root):
+def _enhance(legacy_dir, outdir, cache_dir, magnetic_csv=None, clean_outdir=CLEANED_DIR):
+    from .enhanced_builder import enhance_dataset
+    result = enhance_dataset(legacy_dir, outdir=outdir, cache_dir=cache_dir, magnetic_csv=magnetic_csv)
+    print(f"[DONE] Twelve enhanced feature files: {outdir}; {result['total_rows_per_feature']} samples each.", flush=True)
+    print(f"[REPORT] {outdir}/availability_report.txt", flush=True)
+    _clean(outdir, clean_outdir)
+    return result
+
+
+def _completed_manifest(root, action="plotting"):
     path = root / "dataset_manifest.json"
     if not path.is_file():
         status_path = root / "build_status.json"
         state = json.loads(status_path.read_text()) if status_path.exists() else {}
         detail = state.get("error") or state.get("state", "not completed")
-        raise RuntimeError(f"Dataset build is incomplete in {root}: {detail}. Complete or resume the build before plotting.")
+        raise RuntimeError(f"Dataset build is incomplete in {root}: {detail}. Complete or resume the build before {action}. If the enhanced archive is complete, run 'python -m sep_dataset.cli clean'.")
     return json.loads(path.read_text())
+
+
+def _validate_release(root, manifest):
+    if manifest.get("workflow") == "cleaned_twelve_feature_release":
+        from .cleaned_builder import validate_cleaned_dataset
+        return validate_cleaned_dataset(root)
+    if manifest.get("workflow") == "enhanced_twelve_feature_research_release":
+        from .enhanced_builder import validate_enhanced_dataset
+        return validate_enhanced_dataset(root)
+    from .compatible_builder import validate_dataset
+    return validate_dataset(root)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -71,9 +97,11 @@ def main(argv: list[str] | None = None) -> None:
         if args.legacy_only:
             print(f"[DONE] Original ten feature files: {legacy_dir}", flush=True)
         else:
-            _enhance(legacy_dir, args.outdir or ENHANCED_DIR, args.enhanced_cache_dir, args.magnetic_csv)
+            _enhance(legacy_dir, args.outdir or ENHANCED_DIR, args.enhanced_cache_dir, args.magnetic_csv, args.clean_outdir)
     elif args.command == "enhance":
-        _enhance(args.legacy_dir, args.outdir, args.cache_dir, args.magnetic_csv)
+        _enhance(args.legacy_dir, args.outdir, args.cache_dir, args.magnetic_csv, args.clean_outdir)
+    elif args.command == "clean":
+        _clean(args.dataset_dir, args.outdir)
     elif args.command == "plot":
         from .compatible_figures import FEATURES, EXTRA_FEATURES, run_compatible_figures
         root = Path(args.dataset_dir)
@@ -83,9 +111,10 @@ def main(argv: list[str] | None = None) -> None:
             completed = _completed_manifest(root)
             features = tuple(entry["feature"] for entry in completed["feature_files"])
         manifest = root / "dataset_manifest.json"
-        if manifest.exists() and json.loads(manifest.read_text()).get("workflow") == "enhanced_twelve_feature_research_release":
-            from .enhanced_builder import validate_enhanced_dataset
-            validate_enhanced_dataset(root)
+        if manifest.exists():
+            data = json.loads(manifest.read_text())
+            if data.get("workflow") in ("enhanced_twelve_feature_research_release", "cleaned_twelve_feature_release"):
+                _validate_release(root, data)
         run_compatible_figures(root, args.outdir, bands=args.bands, features=features,
                                tsne=args.tsne, tsne_max_samples=args.tsne_max_samples)
         if not args.original_figures_only:
@@ -96,19 +125,13 @@ def main(argv: list[str] | None = None) -> None:
         from .paper_figures import run_paper_figures
         root = Path(args.dataset_dir)
         completed = _completed_manifest(root)
-        if completed.get("workflow") == "enhanced_twelve_feature_research_release":
-            from .enhanced_builder import validate_enhanced_dataset
-            validate_enhanced_dataset(root)
+        if completed.get("workflow") in ("enhanced_twelve_feature_research_release", "cleaned_twelve_feature_release"):
+            _validate_release(root, completed)
         run_paper_figures(root, args.outdir, features=tuple(entry["feature"] for entry in completed["feature_files"]))
     else:
         root = Path(args.dataset_dir)
-        manifest = json.loads((root / "dataset_manifest.json").read_text())
-        if manifest.get("workflow") == "enhanced_twelve_feature_research_release":
-            from .enhanced_builder import validate_enhanced_dataset
-            result = validate_enhanced_dataset(root)
-        else:
-            from .compatible_builder import validate_dataset
-            result = validate_dataset(root)
+        manifest = _completed_manifest(root, "validation")
+        result = _validate_release(root, manifest)
         print(json.dumps(result, indent=2))
 
 

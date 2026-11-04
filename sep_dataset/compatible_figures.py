@@ -332,6 +332,7 @@ def _quality_report(dataset_dir: Path, summaries: list, outdir: Path, plt, artif
             quality = after.merge(before, on="feature", how="left", suffixes=("_measured", ""))
             prefill_available = bool("missing_fraction_before" in quality and pd.to_numeric(quality["missing_fraction_before"], errors="coerce").notna().any())
     audit_rows, origin_rows = [], []
+    cleaning_available = False
     for feature in after["feature"]:
         path = dataset_dir / "quality" / (feature + "_quality.csv")
         if not path.exists():
@@ -344,6 +345,9 @@ def _quality_report(dataset_dir: Path, summaries: list, outdir: Path, plt, artif
         row = {"feature": feature, "prefill_rows_with_audit": int(known.sum()),
                "prefill_rows_without_audit": int((~known).sum()),
                "audited_missing_fraction_before": float((STEPS-observed[known]).sum() / (STEPS*known.sum())) if known.any() else np.nan}
+        if "cleaning_missing_points_before" in audit:
+            row["missing_fraction_before_offline_cleaning_retained_rows"] = float(pd.to_numeric(audit["cleaning_missing_points_before"], errors="raise").sum()/(STEPS*len(audit))) if len(audit) else np.nan
+            cleaning_available = True
         if "unavailable_channel" in audit:
             unavailable = audit["unavailable_channel"].astype(str).str.lower().isin(["true", "1", "1.0"])
             row["structurally_unavailable_windows"] = int(unavailable.sum())
@@ -370,7 +374,11 @@ def _quality_report(dataset_dir: Path, summaries: list, outdir: Path, plt, artif
     quality.to_csv(outdir / "feature_quality_summary.csv", index=False)
     fig, ax = plt.subplots(figsize=(10, 5))
     y = np.arange(len(quality))
-    if prefill_available:
+    if cleaning_available:
+        ax.barh(y-0.15, quality["missing_fraction_before_offline_cleaning_retained_rows"], height=0.3, label="Before offline filling (retained rows)", color="#c28b4c")
+        ax.barh(y+0.15, quality["missing_fraction_after_measured"] if "missing_fraction_after_measured" in quality else quality["missing_fraction_after"], height=0.3, label="After offline filling", color="#548f72")
+        ax.legend(frameon=False)
+    elif prefill_available:
         audited_only = "prefill_rows_without_audit" in quality and quality["prefill_rows_without_audit"].fillna(0).gt(0).any()
         before_values = quality["audited_missing_fraction_before"] if audited_only else quality["missing_fraction_before"]
         ax.barh(y-0.15, before_values, height=0.3, label="Before filling{}".format(" (audited rows only)" if audited_only else ""), color="#c28b4c")
@@ -379,7 +387,7 @@ def _quality_report(dataset_dir: Path, summaries: list, outdir: Path, plt, artif
     else:
         ax.barh(y, quality["missing_fraction_after"], color="#548f72")
     ax.set(yticks=y, yticklabels=quality["feature"], xlim=(0, 1), xlabel="Fraction of time-series cells missing",
-           title="Feature missingness{}".format(" before and after filling" if prefill_available else " after filling (prefill audit unavailable)"))
+           title="Feature missingness{}".format(" before and after offline filling (retained cohort)" if cleaning_available else " before and after filling" if prefill_available else " after filling (prefill audit unavailable)"))
     _save(fig, outdir / "feature_missingness", plt, artifacts)
     if origin_rows:
         by_origin = pd.DataFrame(origin_rows)
@@ -391,7 +399,7 @@ def _quality_report(dataset_dir: Path, summaries: list, outdir: Path, plt, artif
                title="Channel availability by preserved baseline and extension")
         ax.legend(title="Row origin", frameon=False)
         _save(fig, outdir / "structural_channel_availability", plt, artifacts)
-    return {"prefill_quality_available": prefill_available, "source": str(before_path) if before_path.exists() else None,
+    return {"prefill_quality_available": prefill_available, "offline_cleaning_audit_available": cleaning_available, "source": str(before_path) if before_path.exists() else None,
             "per_sample_audit_features": [row["feature"] for row in audit_rows],
             "baseline_prefill_note": "Preserved filled baseline rows have unknown original missingness unless an audit is supplied; unknown rows are excluded from prefill fractions."}
 
@@ -481,8 +489,11 @@ def run_compatible_figures(dataset_dir, outdir, bands: Sequence[int] = (10, 30, 
     }
     dataset_manifest_path = dataset_dir / "dataset_manifest.json"
     dataset_manifest = json.loads(dataset_manifest_path.read_text()) if dataset_manifest_path.exists() else {}
-    enhanced = dataset_manifest.get("workflow") == "enhanced_twelve_feature_research_release"
+    cleaned = dataset_manifest.get("workflow") == "cleaned_twelve_feature_release"
+    enhanced = cleaned or dataset_manifest.get("workflow") == "enhanced_twelve_feature_research_release"
     manifest["input_workflow"] = dataset_manifest.get("workflow", "original_or_external")
+    if cleaned:
+        manifest["cleaning_policy"] = "Rowwise retrospective interpolation and nearest-edge extension; samples with an entirely unavailable feature removed from every file; see exclusions.csv and cohort_counts.csv."
     for feature, path in paths.items():
         print("[FIGURES] {}: reading {}".format(feature, path.name), flush=True)
         frame, x = _read_feature(path, feature)
@@ -491,6 +502,8 @@ def run_compatible_figures(dataset_dir, outdir, bands: Sequence[int] = (10, 30, 
             note = "Legacy measurements + flagged SGPS reference-energy estimates; detector responses differ"
         elif enhanced and feature in EXTRA_FEATURES:
             note = "Native MDI/HMI active-region patch values; five-minute grid includes bounded holds"
+        if cleaned:
+            note = (note + "; " if note else "") + "Partial windows interpolated/edge-filled; shared cohort excludes wholly unavailable feature rows"
         frame.attrs["source_note"] = note
         audit_path = dataset_dir / "quality" / (feature + "_quality.csv")
         row_audit = None

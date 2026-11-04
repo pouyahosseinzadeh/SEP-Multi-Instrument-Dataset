@@ -1,5 +1,7 @@
 # Enhanced twelve-feature dataset and publication diagnostics
 
+This document describes the twelve-feature source archive before the final offline cleanup. Default `build` and `enhance` now also create the final filled, aligned release in `data/processed/cleaned_1998_2025`. Default validation and plotting use that final release. If the twelve source files are already complete, run `python -m sep_dataset.cli clean`; see [CLEANED_DATASET.md](CLEANED_DATASET.md) for interpolation, source-fill masking, shared row exclusions and the exact run commands. The source policies and unavailable-value descriptions below continue to apply to the archived inputs.
+
 ## Coverage and intended interpretation
 
 The enhanced release retains the original flare cohort and 340-column per-feature layout, adds `USFLUXL` and `R_VALUE`, and supplies an explicitly derived modern continuation for unavailable proton measurements. It does not claim complete native coverage for every feature, or uniform calibration across instruments. Missing active-region identifiers, ambiguous patches, rejected quality flags, stale records, unsupported dates and invalid energy brackets can leave `-9999` cells. Read the availability and provenance reports before scientific interpretation.

@@ -130,7 +130,8 @@ def load_feature(path: Path, quality_path: Path, feature: str, native_min_points
     for code in STATUS_CODES:
         summary["points_"+code] = counts[code]
     summary["source_era"] = eras.to_numpy()
-    for col in ("sample_id", "origin", "source_method"):
+    for col in ("sample_id", "origin", "source_method", "source_row_index", "cleaning_missing_points_before",
+                "cleaning_interpolated_points", "cleaning_edge_filled_points", "source_fill_points"):
         if col in quality:
             summary[col] = quality[col].to_numpy()
     return metadata, values, native_values, summary, counts
@@ -226,6 +227,9 @@ def run_paper_figures(dataset_dir, outdir, features=FEATURES, min_pairs=5, nativ
     for feature correlations. Native-only sensitivity uses O-coded points only.
     """
     dataset_dir, outdir = Path(dataset_dir), Path(outdir)
+    input_manifest_path = dataset_dir / "dataset_manifest.json"
+    input_manifest = json.loads(input_manifest_path.read_text()) if input_manifest_path.exists() else {}
+    cleaned = input_manifest.get("workflow") == "cleaned_twelve_feature_release"
     features = tuple(features)
     if not features or len(set(features)) != len(features) or any(f not in FEATURES for f in features):
         raise ValueError("Choose distinct supported paper features")
@@ -276,6 +280,9 @@ def run_paper_figures(dataset_dir, outdir, features=FEATURES, min_pairs=5, nativ
                                   "native_fraction_all_points": count_codes["O"]/total,
                                   "derived_fraction_all_points": count_codes["D"]/total,
                                   "held_fraction_all_points": count_codes["H"]/total})
+            if "cleaning_missing_points_before" in summary:
+                coverage_rows[-1]["fraction_missing_before_offline_cleaning_retained_rows"] = float(pd.to_numeric(summary.loc[selected, "cleaning_missing_points_before"], errors="raise").sum()/total)
+                coverage_rows[-1]["fraction_filled_in_offline_cleaning"] = float((pd.to_numeric(summary.loc[selected, "cleaning_interpolated_points"], errors="raise") + pd.to_numeric(summary.loc[selected, "cleaning_edge_filled_points"], errors="raise")).sum()/total)
             for code in STATUS_CODES:
                 method_rows.append({"feature": feature, "year": int(year), "status_code": code,
                                     "points": count_codes[code], "total_points": total, "fraction": count_codes[code]/total})
@@ -369,7 +376,9 @@ def run_paper_figures(dataset_dir, outdir, features=FEATURES, min_pairs=5, nativ
     ax.legend(frameon=False)
     _save(fig, outdir/"native_vs_filled_sensitivity", plt, artifacts)
     fig, axes = plt.subplots(1, 2, figsize=(16, 5))
-    for ax, column, title in ((axes[0], "fraction_missing_before_gap_fill_known_only", "Before gap fill: known provenance only"), (axes[1], "fraction_missing_after_filling", "After filling: all saved rows")):
+    before_column = "fraction_missing_before_offline_cleaning_retained_rows" if cleaned and "fraction_missing_before_offline_cleaning_retained_rows" in coverage else "fraction_missing_before_gap_fill_known_only"
+    before_title = "Before offline filling: retained cohort" if before_column.startswith("fraction_missing_before_offline") else "Before gap fill: known provenance only"
+    for ax, column, title in ((axes[0], before_column, before_title), (axes[1], "fraction_missing_after_filling", "After filling: all saved rows")):
         pivot = coverage.pivot(index="feature", columns="year", values=column).reindex(features)
         im = ax.imshow(pivot, vmin=0, vmax=1, cmap="YlOrRd", aspect="auto")
         ax.set(yticks=np.arange(len(features)), yticklabels=features, xticks=np.arange(len(pivot.columns)), xticklabels=pivot.columns.astype(str), title=title)
@@ -406,6 +415,7 @@ def run_paper_figures(dataset_dir, outdir, features=FEATURES, min_pairs=5, nativ
     _save(fig, outdir/"time_resolved_label_association", plt, artifacts)
     manifest = {
         "created_utc": datetime.now(timezone.utc).isoformat(), "features": list(features), "sample_windows": len(reference),
+        "input_workflow": input_manifest.get("workflow", "original_or_external"),
         "inputs": {f: str(paths[f]) for f in features}, "figure_files": artifacts,
         "correlation_unit": "one flare window per row; never pooled five-minute observations",
         "correlation_statistics": ["Pearson r", "Spearman rho", "pairwise complete n"], "minimum_pairs": min_pairs,
@@ -421,6 +431,11 @@ def run_paper_figures(dataset_dir, outdir, features=FEATURES, min_pairs=5, nativ
         "instrument_era_analysis": "actual pairwise source_era strings in correlations_by_instrument_era.csv; calendar cohorts are additional descriptive partitions, not instrument-equivalence claims",
         "limitations": ["No significance tests or forecast-accuracy claims", "Overlapping windows, temporal dependence and repeated flare associations may violate independence", "Unknown historical U provenance cannot support observed-only analysis", "Derived proton bands and held magnetogram values are not independent native measurements", "Pairwise missingness changes the cohort between feature pairs; consult n_pairwise", "Class balance, calibration era and median imputation can influence correlations", "Time-resolved correlations are descriptive repeated-bin associations without independence or multiple-testing claims"],
     }
+    if cleaned:
+        manifest["cleaning_policy"] = "Retrospective linear interpolation within each pre-flare feature row; nearest valid edge extension; no cross-row/label filling. Shared cohort excludes a sample if any feature is entirely unavailable after source-fill masking."
+        manifest["cohort_report"] = str(dataset_dir / "cohort_counts.csv")
+        manifest["prefill_quality"] += "; the before-offline-cleaning panel describes recognized invalid cells in retained source rows, not historical acquisition missingness; exclusions are reported separately"
+        manifest["limitations"].append("Global feature-availability filtering changes class/year composition; these figures describe the retained cohort and interpolated points are not native measurements.")
     manifest_path = outdir/"paper_figures_manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2)+"\n")
     print("[DONE] Publication diagnostics: {}".format(outdir), flush=True)
