@@ -7,6 +7,7 @@ from pathlib import Path
 LEGACY_DIR = "data/processed/compatible_1998_2025"
 ENHANCED_DIR = "data/processed/enhanced_1998_2025"
 CLEANED_DIR = "data/processed/cleaned_1998_2025"
+CLEANED_TEN_DIR = "data/processed/cleaned_ten_1998_2025"
 FIGURE_DIR = "reports/figures_paper_10features_1998_2025"
 PLOT_FEATURES = ("Vx", "flow_speed", "proton_density", "T", "F", "Xs", "Xl", "P4", "P5", "P6")
 
@@ -33,7 +34,8 @@ def build_parser() -> argparse.ArgumentParser:
     enhance.add_argument("--clean-outdir", default=CLEANED_DIR)
     clean = sub.add_parser("clean", help="Offline: interpolate partial feature rows and globally remove samples with an entirely unavailable feature.")
     clean.add_argument("--dataset-dir", default=ENHANCED_DIR)
-    clean.add_argument("--outdir", default=CLEANED_DIR)
+    clean.add_argument("--outdir", default=None, help=f"Default: {CLEANED_TEN_DIR} with --original-ten-only; otherwise {CLEANED_DIR}.")
+    clean.add_argument("--original-ten-only", action="store_true", help="Recalculate the common cohort using only the original ten features in the existing enhanced archive; no downloads.")
     plot = sub.add_parser("plot", help="Original time-series/PCA figures plus new correlations, distributions and coverage diagnostics.")
     plot.add_argument("--dataset-dir", default=CLEANED_DIR)
     plot.add_argument("--outdir", default=FIGURE_DIR)
@@ -51,10 +53,11 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _clean(dataset_dir, outdir=CLEANED_DIR):
+def _clean(dataset_dir, outdir=CLEANED_DIR, features=None):
     from .cleaned_builder import clean_dataset
-    result = clean_dataset(dataset_dir, outdir=outdir)
-    print(f"[DONE] Twelve cleaned feature files: {outdir}; {result['total_rows_per_feature']} aligned samples each; no missing feature values.", flush=True)
+    kwargs = {"features": features} if features is not None else {}
+    result = clean_dataset(dataset_dir, outdir=outdir, **kwargs)
+    print(f"[DONE] {len(result['feature_files'])} cleaned feature files: {outdir}; {result['total_rows_per_feature']} aligned samples each; no missing feature values.", flush=True)
     print(f"[REPORT] {outdir}/availability_report.txt", flush=True)
     return result
 
@@ -79,7 +82,7 @@ def _completed_manifest(root, action="plotting"):
 
 
 def _validate_release(root, manifest):
-    if manifest.get("workflow") == "cleaned_twelve_feature_release":
+    if manifest.get("workflow") in ("cleaned_twelve_feature_release", "cleaned_ten_feature_release"):
         from .cleaned_builder import validate_cleaned_dataset
         return validate_cleaned_dataset(root)
     if manifest.get("workflow") == "enhanced_twelve_feature_research_release":
@@ -157,7 +160,10 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "enhance":
         _enhance(args.legacy_dir, args.outdir, args.cache_dir, args.magnetic_csv, args.clean_outdir)
     elif args.command == "clean":
-        _clean(args.dataset_dir, args.outdir)
+        if args.original_ten_only:
+            _clean(args.dataset_dir, args.outdir or CLEANED_TEN_DIR, features=PLOT_FEATURES)
+        else:
+            _clean(args.dataset_dir, args.outdir or CLEANED_DIR)
     elif args.command == "plot":
         from .compatible_figures import run_compatible_figures
         root = Path(args.dataset_dir)

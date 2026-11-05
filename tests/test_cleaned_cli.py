@@ -22,6 +22,28 @@ def test_default_analysis_commands_select_cleaned_dataset():
         assert parser.parse_args([command]).dataset_dir == cli.CLEANED_DIR
 
 
+def test_original_ten_cleanup_reuses_archive_and_has_separate_default_output(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli, "_clean", lambda *args, **kwargs: calls.append((args, kwargs)))
+    cli.main(["clean", "--original-ten-only"])
+    assert calls == [((cli.ENHANCED_DIR, cli.CLEANED_TEN_DIR), {"features": cli.PLOT_FEATURES})]
+
+
+def test_original_ten_cleanup_respects_explicit_folders(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli, "_clean", lambda *args, **kwargs: calls.append((args, kwargs)))
+    cli.main(["clean", "--original-ten-only", "--dataset-dir", "/existing/archive", "--outdir", "/new/ten"])
+    assert calls == [(("/existing/archive", "/new/ten"), {"features": cli.PLOT_FEATURES})]
+
+
+def test_ten_feature_validate_dispatches_to_cleaned_validator(tmp_path, monkeypatch):
+    (tmp_path / "dataset_manifest.json").write_text(json.dumps({"workflow": "cleaned_ten_feature_release"}))
+    calls = []
+    monkeypatch.setattr(cleaned_builder, "validate_cleaned_dataset", lambda root: calls.append(Path(root)) or {"valid": True})
+    cli.main(["validate", "--dataset-dir", str(tmp_path)])
+    assert calls == [tmp_path]
+
+
 def test_validate_dispatches_to_cleaned_validator(tmp_path, monkeypatch):
     (tmp_path / "dataset_manifest.json").write_text(json.dumps({"workflow": "cleaned_twelve_feature_release"}))
     calls = []

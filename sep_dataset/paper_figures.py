@@ -226,7 +226,7 @@ def run_paper_figures(dataset_dir, outdir, features=FEATURES, min_pairs=5, nativ
     dataset_dir, outdir = Path(dataset_dir), Path(outdir)
     input_manifest_path = dataset_dir / "dataset_manifest.json"
     input_manifest = json.loads(input_manifest_path.read_text()) if input_manifest_path.exists() else {}
-    cleaned = input_manifest.get("workflow") == "cleaned_twelve_feature_release"
+    cleaned = input_manifest.get("workflow") in ("cleaned_twelve_feature_release", "cleaned_ten_feature_release")
     features = tuple(features)
     if not features or len(set(features)) != len(features) or any(f not in FEATURES for f in features):
         raise ValueError("Choose distinct supported paper features")

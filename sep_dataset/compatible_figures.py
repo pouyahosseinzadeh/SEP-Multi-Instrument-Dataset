@@ -476,7 +476,7 @@ def run_compatible_figures(dataset_dir, outdir, bands: Sequence[int] = (5, 10, 3
     }
     dataset_manifest_path = dataset_dir / "dataset_manifest.json"
     dataset_manifest = json.loads(dataset_manifest_path.read_text()) if dataset_manifest_path.exists() else {}
-    cleaned = dataset_manifest.get("workflow") == "cleaned_twelve_feature_release"
+    cleaned = dataset_manifest.get("workflow") in ("cleaned_twelve_feature_release", "cleaned_ten_feature_release")
     enhanced = cleaned or dataset_manifest.get("workflow") == "enhanced_twelve_feature_research_release"
     manifest["input_workflow"] = dataset_manifest.get("workflow", "original_or_external")
     if cleaned:

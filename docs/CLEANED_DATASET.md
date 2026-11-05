@@ -1,36 +1,63 @@
-# Final filled and aligned twelve-feature release
+# Final filled and aligned feature releases
 
-The final offline cleanup applies the same rule to every feature: fill partially available rows from values within that row, and exclude a sample from all twelve files if any feature row is entirely unavailable after source-fill masking. A shared exclusion mask preserves sample identities, ordering, metadata and SEP/NSEP labels across feature files.
+The offline cleaner fills partially available rows using values within that row. It removes a sample from every output feature file when any selected feature row has no usable value after source-fill masking. The same exclusion mask preserves sample identities, ordering, metadata and SEP/NSEP labels across the selected files.
 
-## Regenerate figures from an existing cleaned release
+## Create the final ten-feature release from existing downloads
 
-Keep `data/processed/cleaned_1998_2025` and run this from the updated project folder:
+Use the completed, unfiltered source archive in `data/processed/enhanced_1998_2025`. Update the code while keeping your existing `data` and `.venv` folders. From the server project folder, run:
+
+```bash
+cd ~/Pouya/Projects/SEP_DATASET_Paper/SEP-Multi-Instrument-Dataset
+```
+
+First create the ten-feature output:
+
+```bash
+.venv/bin/python -u -m sep_dataset.cli clean --original-ten-only \
+  --dataset-dir data/processed/enhanced_1998_2025 \
+  --outdir data/processed/cleaned_ten_1998_2025
+```
+
+Then validate it:
+
+```bash
+.venv/bin/python -m sep_dataset.cli validate \
+  --dataset-dir data/processed/cleaned_ten_1998_2025
+```
+
+Finally regenerate figures from those files:
 
 ```bash
 .venv/bin/python -u -m sep_dataset.cli plot \
-  --dataset-dir data/processed/cleaned_1998_2025 \
-  --outdir reports/figures_paper_10features_1998_2025 \
-  --bands 5 10 30 60 100
+  --dataset-dir data/processed/cleaned_ten_1998_2025 \
+  --outdir reports/figures_final_ten_1998_2025
 ```
 
-Plotting reads saved files and does not download, clean or rewrite datasets. All figures and correlations use only Vx, flow_speed, proton_density, T, F, Xs, Xl, P4, P5 and P6. USFLUXL and R_VALUE are excluded from plotted summaries, and their CSVs are not required by plot validation.
+The new release contains **Vx, flow_speed, proton_density, T, F, Xs, Xl, P4, P5 and P6**. USFLUXL and R_VALUE do not participate in its exclusion rule, validation or plots. Their source files are not required, even when the enhanced archive manifest lists twelve features. The retained sample count is calculated from the selected ten inputs and recorded in `cohort_counts.csv`; no fixed count is promised in advance.
 
-The >5 MeV figure group selects `event_type == 1` rows with `sep_peak_1 >= 5` pfu. The original >10, >30, >60 and >100 MeV selections are unchanged; NSEP controls remain all saved `event_type == 0` rows. Profiles retain shaded 95% confidence intervals. Method/source footers and significance overlays are removed from the images; statistical tests and source notes remain in CSVs and manifests.
+These commands perform no source download and do not change the source archive or older outputs. `clean --original-ten-only` selects `data/processed/cleaned_ten_1998_2025` by default. Explicit input/output paths are recommended so each release is unambiguous. Use a new output directory rather than mixing ten- and twelve-feature releases.
 
-The figures describe the cohort already saved in these cleaned files. Excluding magnetic features from plots does not change that cohort or restore previously excluded rows. The new output folder keeps this figure set separate from older runs.
+An earlier twelve-feature cleanup excluded samples based on magnetic coverage as well as the original ten features. Plotting only ten features from that saved subset does not restore those samples. The new ten-feature cleanup recalculates the cohort from the enhanced archive. An already filtered `cleaned_1998_2025` directory is not a suitable source for recovering excluded samples; use the enhanced archive.
 
-## Create a cleaned release from a completed source archive
+The validator checks schema, alignment, metadata, checksums, quality masks, retained/excluded sample accounting and final feature completeness. Source measurements, SEP label associations and the documented SGPS transition still require scientific validation. Keep the per-row quality files and source reports with the ten CSVs.
 
-This is a separate data-processing step for an archive that has not yet been cleaned:
+## Figures from an existing cleaned release
+
+For later figure-only reruns, repeat the `plot` command above. It reads saved data without cleaning or rewriting it. All figures use only the original ten features. Default `plot`, `paper-plot` and `validate` still select the older `data/processed/cleaned_1998_2025` directory; supply `--dataset-dir data/processed/cleaned_ten_1998_2025` for the ten-feature release.
+
+The >5 MeV group selects `event_type == 1` rows with `sep_peak_1 >= 5` pfu. The original >10, >30, >60 and >100 MeV selections are unchanged. NSEP controls remain all saved `event_type == 0` rows. Profiles retain shaded 95% confidence intervals. Statistical tests and source notes remain in CSVs and manifests instead of method/source footers or significance overlays on the images.
+
+## Optional twelve-feature cleanup
+
+The original default `clean` command remains available for compatibility:
 
 ```bash
-.venv/bin/python -u -m sep_dataset.cli clean
-.venv/bin/python -m sep_dataset.cli validate
+.venv/bin/python -u -m sep_dataset.cli clean \
+  --dataset-dir data/processed/enhanced_1998_2025 \
+  --outdir data/processed/cleaned_1998_2025
 ```
 
-`clean` reads `data/processed/enhanced_1998_2025` and writes `data/processed/cleaned_1998_2025`. It performs no source download and does not require a raw-cache rebuild. New `build` and `enhance` runs invoke cleanup after completing the source archive. `--clean-outdir` selects a different final output for those commands. `clean --dataset-dir PATH --outdir PATH` selects existing source and final folders directly. Source and final folders must be different.
-
-Default `validate`, `plot` and `paper-plot` use the cleaned output. The separate `validate` command checks the full data release; plot commands check only their selected original feature inputs. Figures are written to `reports/figures_paper_10features_1998_2025`. Explicit `--dataset-dir` still permits inspecting a source archive with gaps.
+It includes USFLUXL and R_VALUE in the shared exclusion rule. New `build` and `enhance` runs retain that twelve-feature cleanup behavior; `--clean-outdir` selects its destination. The separate `--original-ten-only` command creates the ten-feature cohort from the completed archive. Source and output directories must be different.
 
 ## Invalid values
 
@@ -58,7 +85,7 @@ The feature columns are uniformly spaced in chronological order, from `_288` to 
 
 The rule fills all remaining unavailable cells in a retained row, including long within-window gaps; it does not guarantee that those estimates reproduce unobserved physical variations. The quality sidecar records how many cells and which bins were filled. Consumers can select stricter coverage criteria using the pre-cleaning counts.
 
-Interpolation is retrospective within the pre-flare window. It uses no measurements from after the sample's pre-flare window, but an interior bin can use a later bin in that window. New interpolated bins must not be described as causal native observations. The SGPS source estimates, native magnetic cadence, calibration caveats and source quality controls remain documented in [ENHANCED_DATASET.md](ENHANCED_DATASET.md).
+Interpolation is retrospective within the pre-flare window. It uses no measurements from after the sample's pre-flare window, but an interior bin can use a later bin in that window. New interpolated bins must not be described as causal native observations. The SGPS source estimates, calibration caveats and source quality controls remain documented in [ENHANCED_DATASET.md](ENHANCED_DATASET.md).
 
 ## Quality and selection reports
 
@@ -68,7 +95,7 @@ Final CSV names and the 52-metadata-plus-288-value layout match the input releas
 
 `exclusions.csv` identifies dropped samples and the feature or features lacking any usable value. `cohort_counts.csv` reports the sample and SEP/NSEP counts before and after selection by year. `quality_summary.csv` and `availability_report.txt` report invalid values, filled cells and final completeness. The manifest records input hashes, processing policy, source preservation and output checksums. The validator checks file structure, sample/label alignment, quality masks, checksums and absence of unavailable final values.
 
-The global exclusion rule can remove many samples if one feature has poor coverage. The resulting plots describe the retained cohort, not the full pre-cleaning population. Report that selection in the paper, and investigate suspicious source/region-matching losses separately rather than claiming that interpolation recovered an entirely missing row.
+The common exclusion rule is calculated only over the features selected for this release. For the ten-feature mode, magnetic availability does not remove samples. The plots describe the retained cohort, not every source sample. Report the selected feature set, final counts and exclusion reasons in the paper. Existing source imputation and SGPS estimates remain flagged; software validation does not by itself establish source accuracy, label validity or cross-instrument equivalence.
 
 ## Disk space and recovery
 

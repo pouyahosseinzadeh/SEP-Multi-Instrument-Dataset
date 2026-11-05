@@ -1,8 +1,8 @@
-"""Create an aligned, gap-free analysis release from the collected twelve files.
+"""Create an aligned, gap-free release from selected collected feature files.
 
 This is an offline derivative. Missing values are filled only from valid values
 in the same 24-hour row. Samples with an entirely unavailable feature are
-excluded from all twelve files; no other sample supplies an invented row.
+excluded from all selected files; no other sample supplies an invented row.
 """
 from __future__ import annotations
 
@@ -20,6 +20,8 @@ from .enhanced_builder import FEATURES, feature_columns
 
 VERSION = "aligned-rowwise-clean-v1"
 WORKFLOW = "cleaned_twelve_feature_release"
+TEN_FEATURES = FEATURES[:10]
+TEN_WORKFLOW = "cleaned_ten_feature_release"
 SOURCE_FILL_VALUES = {
     "F": 9999.99,
     "Vx": 99999.9,
@@ -188,18 +190,59 @@ def _quality_summary(feature, q):
             "cleaning_edge_filled_points": int(q.cleaning_edge_filled_points.sum()), "point_counts": counts}
 
 
-def clean_dataset(dataset_dir="data/processed/enhanced_1998_2025", *, outdir="data/processed/cleaned_1998_2025"):
-    """Create twelve aligned files without unavailable feature values, offline."""
+def _selected_features(features):
+    selected = tuple(FEATURES if features is None else features)
+    if selected not in (tuple(FEATURES), tuple(TEN_FEATURES)):
+        raise ValueError("Cleaning supports the original ten features or all twelve features in their original order")
+    return selected
+
+
+def _check_output_features(output, entries):
+    """Refuse mixed releases without deleting or overwriting unrelated files."""
+    expected_files = {entry["filename"] for entry in entries}
+    extra_files = {p.name for p in output.glob("*_with_*_filled.csv")} - expected_files
+    expected_quality = {f"{entry['feature']}_quality.csv" for entry in entries}
+    extra_quality = {p.name for p in (output / "quality").glob("*_quality.csv")} - expected_quality
+    if extra_files or extra_quality:
+        raise ValueError("Cleaned output contains other feature files; choose a new --outdir for the selected feature cohort")
+
+
+def clean_dataset(dataset_dir="data/processed/enhanced_1998_2025", *, outdir="data/processed/cleaned_1998_2025", features=None):
+    """Create ten or twelve aligned feature files from the source archive, offline.
+
+    The ten-feature cohort is selected before cleaning, so unavailable magnetic
+    rows cannot exclude usable samples from the original ten feature files.
+    """
     root, output = Path(dataset_dir), Path(outdir)
+    features = _selected_features(features)
+    workflow = TEN_WORKFLOW if features == tuple(TEN_FEATURES) else WORKFLOW
+    feature_label = "ten" if workflow == TEN_WORKFLOW else "twelve"
     if root.resolve() == output.resolve():
         raise ValueError("Cleaned output needs its own folder; collected inputs must remain unchanged")
     source_manifest = root / "dataset_manifest.json"
     if not source_manifest.is_file():
         raise ValueError(f"No completed source manifest in {root}; finish enhancement before cleaning")
     original = json.loads(source_manifest.read_text())
-    entries = original.get("feature_files", [])
-    if [e.get("feature") for e in entries] != list(FEATURES):
-        raise ValueError("Cleaning requires a complete twelve-feature dataset in the original feature order")
+    if original.get("workflow") in (WORKFLOW, TEN_WORKFLOW):
+        raise ValueError("Cleaning requires the unfiltered enhanced source archive, not an already cleaned dataset; excluded rows cannot be recovered from cleaned files")
+    source_entries = original.get("feature_files", [])
+    if workflow == TEN_WORKFLOW:
+        if original.get("workflow") != "enhanced_twelve_feature_research_release":
+            raise ValueError("Ten-feature cleanup requires the unfiltered enhanced source archive")
+        by_feature = {entry.get("feature"): entry for entry in source_entries}
+        if len(by_feature) != len(source_entries) or any(feature not in by_feature for feature in features):
+            raise ValueError("Source manifest must contain each original ten feature exactly once")
+        entries = [by_feature[feature] for feature in features]
+    else:
+        entries = source_entries
+        if [e.get("feature") for e in entries] != list(features):
+            raise ValueError("Cleaning requires a complete twelve-feature dataset in the original feature order")
+    _check_output_features(output, entries)
+    output_manifest = output / "dataset_manifest.json"
+    if output_manifest.is_file():
+        saved_features = [entry.get("feature") for entry in json.loads(output_manifest.read_text()).get("feature_files", [])]
+        if saved_features != list(features):
+            raise ValueError("Cleaned folder belongs to a different feature cohort; choose a new --outdir")
     columns = original.get("metadata_columns", [])
     if len(columns) != 52 or not {"FlrOnset", "event_type"}.issubset(columns):
         raise ValueError("Cleaning requires the original 52 metadata columns")
@@ -244,9 +287,9 @@ def clean_dataset(dataset_dir="data/processed/enhanced_1998_2025", *, outdir="da
     retained = int(keep.sum())
     source_manifest_hash = file_sha256(source_manifest)
     source_config_hash = hashlib.sha256(json.dumps(original.get("config", {}), sort_keys=True, default=str).encode()).hexdigest()
-    config = {"version": VERSION, "features": list(FEATURES), "source_config_sha256": source_config_hash,
+    config = {"version": VERSION, "features": list(features), "source_config_sha256": source_config_hash,
               "input_files": input_hashes, "input_quality_files": quality_hashes,
-              "cohort_policy": "exclude a sample from all twelve files when any feature has no valid anchors",
+              "cohort_policy": f"exclude a sample from all {feature_label} files when any selected feature has no valid anchors" if workflow == TEN_WORKFLOW else "exclude a sample from all twelve files when any feature has no valid anchors",
               "fill_policy": "linear interpolation within a row; nearest valid edge; one-anchor rows held constant; no cross-row fill",
               "source_fill_values": SOURCE_FILL_VALUES, "source_fill_matching": "exact decimal or float32 representation; abs>=1e29 also rejected"}
     output.mkdir(parents=True, exist_ok=True)
@@ -256,7 +299,7 @@ def clean_dataset(dataset_dir="data/processed/enhanced_1998_2025", *, outdir="da
     if (output / "dataset_manifest.json").is_file():
         try:
             result = validate_cleaned_dataset(output)
-            print(f"[RESUME] All twelve cleaned files verified: {result['rows_per_file']} samples each", flush=True)
+            print(f"[RESUME] All {feature_label} cleaned files verified: {result['rows_per_file']} samples each", flush=True)
             return json.loads((output / "dataset_manifest.json").read_text())
         except (ValueError, OSError, AssertionError, KeyError):
             pass  # Repair inconsistent outputs from verified source files below.
@@ -266,8 +309,8 @@ def clean_dataset(dataset_dir="data/processed/enhanced_1998_2025", *, outdir="da
         mapping = pd.DataFrame({"source_row_index": range(rows), "sample_id": ids,
                                 "FlrOnset": metadata.FlrOnset, "event_type": metadata.event_type})
         exclusions = mapping.loc[excluded].copy()
-        exclusions["empty_features"] = [" | ".join(f for f in FEATURES if empty_by_feature[f][i]) for i in np.flatnonzero(excluded)]
-        for feature in FEATURES:
+        exclusions["empty_features"] = [" | ".join(f for f in features if empty_by_feature[f][i]) for i in np.flatnonzero(excluded)]
+        for feature in features:
             exclusions[f"empty_{feature}"] = empty_by_feature[feature][excluded]
         _atomic_csv(output / "exclusions.csv", exclusions)
         retained_map = mapping.loc[keep].copy().reset_index(drop=True)
@@ -277,7 +320,7 @@ def clean_dataset(dataset_dir="data/processed/enhanced_1998_2025", *, outdir="da
         _atomic_csv(output / "cohort_counts.csv", cohort)
         report = {"source_samples": rows, "retained_samples": retained, "excluded_samples": int(excluded.sum()),
                   "class_counts_before": _class_counts(metadata), "class_counts_after": _class_counts(metadata.loc[keep]),
-                  "empty_feature_rows": {f: int(empty_by_feature[f].sum()) for f in FEATURES},
+                  "empty_feature_rows": {f: int(empty_by_feature[f].sum()) for f in features},
                   "missing_points_before_all_source_rows": invalid_counts, "source_fill_points_all_source_rows": fill_counts,
                   "policy": config["fill_policy"], "global_alignment": config["cohort_policy"],
                   "limitations": "Interpolation and edge filling are labelled imputations within retrospective pre-flare windows, not native measurements; long gaps may be filled and are explicitly counted. No entirely missing row is synthesized."}
@@ -357,10 +400,10 @@ def clean_dataset(dataset_dir="data/processed/enhanced_1998_2025", *, outdir="da
         _atomic_csv(output / "quality_summary.csv", pd.DataFrame([{k: v for k, v in s.items() if k != "point_counts"} for s in summaries]))
         _atomic_csv(output / "feature_cleaning_summary.csv", pd.DataFrame(cleaning_rows))
         availability_text = "\n".join([
-            "Cleaned twelve-feature analysis dataset",
+            f"Cleaned {feature_label}-feature analysis dataset",
             f"Source samples: {rows}; retained: {retained}; globally excluded: {int(excluded.sum())}.",
             f"Retained labels: SEP={report['class_counts_after']['SEP']}; NSEP={report['class_counts_after']['NSEP']}.",
-            "Every retained row has 288 finite feature values in each of the twelve aligned files; no -9999 feature values remain.",
+            f"Every retained row has 288 finite feature values in each of the {feature_label} aligned files; no -9999 feature values remain.",
             "Interior gaps use linear interpolation (I); leading/trailing gaps use nearest available edges (E). One-anchor rows use the single available value and are explicitly flagged.",
             "No row is filled from another sample or its label. A sample with a wholly unavailable feature is removed from every feature file; see exclusions.csv.",
             "Existing O/D/H/U provenance is retained for unchanged values. Filled values are imputation, not new native observations; historical prefill provenance may remain unknown (U).",
@@ -373,7 +416,7 @@ def clean_dataset(dataset_dir="data/processed/enhanced_1998_2025", *, outdir="da
         availability_part.write_text(availability_text, encoding="utf-8")
         availability_part.replace(availability_path)
         artifacts = {name: file_sha256(output / name) for name in ("exclusions.csv", "row_mapping.csv", "cohort_counts.csv", "cleaning_report.json", "quality_summary.csv", "feature_cleaning_summary.csv", "availability_report.txt")}
-        manifest = {"workflow": WORKFLOW, "status": "complete_gap_free_analysis_derivative",
+        manifest = {"workflow": workflow, "status": "complete_gap_free_analysis_derivative",
                     "created_utc": datetime.now(timezone.utc).isoformat(), "config": config,
                     "source_dataset_dir": str(root.resolve()), "source_manifest_sha256": source_manifest_hash,
                     "source_total_rows": rows, "excluded_rows": int(excluded.sum()), "total_rows_per_feature": retained,
@@ -384,9 +427,9 @@ def clean_dataset(dataset_dir="data/processed/enhanced_1998_2025", *, outdir="da
                     "class_counts_after": report["class_counts_after"],
                     "source_audits": "Original native/source measurement audits remain in source_dataset_dir; they are not duplicated here."}
         _atomic_json(output / "dataset_manifest.json", manifest)
-        _atomic_json(state_path, {"state": "complete", "completed_features": list(FEATURES), "config": config})
+        _atomic_json(state_path, {"state": "complete", "completed_features": list(features), "config": config})
         validate_cleaned_dataset(output)
-        print(f"[DONE] Twelve cleaned files: {retained} aligned samples each; no unavailable feature values", flush=True)
+        print(f"[DONE] {feature_label.capitalize()} cleaned files: {retained} aligned samples each; no unavailable feature values", flush=True)
         return manifest
     except BaseException as exc:
         try:
@@ -404,14 +447,18 @@ def validate_cleaned_dataset(dataset_dir):
     if not manifest_path.is_file():
         raise ValueError(f"Cleaned dataset is incomplete in {root}; run or resume clean first")
     manifest = json.loads(manifest_path.read_text())
-    if manifest.get("workflow") != WORKFLOW:
-        raise ValueError("Not a cleaned twelve-feature dataset manifest")
+    if manifest.get("workflow") not in (WORKFLOW, TEN_WORKFLOW):
+        raise ValueError("Not a cleaned ten- or twelve-feature dataset manifest")
+    features = tuple(TEN_FEATURES) if manifest["workflow"] == TEN_WORKFLOW else tuple(FEATURES)
+    if manifest.get("config", {}).get("features") != list(features):
+        raise ValueError("Cleaned workflow/config feature selection disagrees")
     if manifest["config"] != json.loads((root / "build_config.json").read_text()):
         raise ValueError("Cleaned manifest/config mismatch")
     if json.loads((root / "build_status.json").read_text()).get("state") != "complete":
         raise ValueError("Cleaned build is not complete; resume clean before analysis")
-    if [entry["feature"] for entry in manifest["feature_files"]] != list(FEATURES):
-        raise ValueError("Cleaned output requires all twelve features")
+    if [entry["feature"] for entry in manifest["feature_files"]] != list(features):
+        raise ValueError("Cleaned output requires exactly its selected features in their original order")
+    _check_output_features(root, manifest["feature_files"])
     rows = manifest["total_rows_per_feature"]
     if rows <= 0:
         raise ValueError("Cleaned dataset cannot be empty")
@@ -428,7 +475,7 @@ def validate_cleaned_dataset(dataset_dir):
         raise ValueError("Cleaned retained/excluded sample identifiers overlap or duplicate")
     if not mapping.event_type.isin([0, 1]).all() or not exclusions.event_type.isin([0, 1]).all():
         raise ValueError("Invalid retained/excluded labels")
-    empty_columns = [f"empty_{feature}" for feature in FEATURES]
+    empty_columns = [f"empty_{feature}" for feature in features]
     if not set(empty_columns).issubset(exclusions) or (len(exclusions) and not exclusions[empty_columns].any(axis=1).all()):
         raise ValueError("Excluded samples lack an entirely unavailable feature reason")
     original_indices = mapping.source_row_index.tolist() + exclusions.source_row_index.tolist()
@@ -496,6 +543,6 @@ def validate_cleaned_dataset(dataset_dir):
         raise ValueError("Cleaned labels differ from row mapping")
     if not metadata.FlrOnset.astype(str).reset_index(drop=True).equals(mapping.FlrOnset.astype(str).reset_index(drop=True)):
         raise ValueError("Cleaned flare onsets differ from row mapping")
-    return {"valid": True, "feature_files": len(FEATURES), "rows_per_file": rows,
+    return {"valid": True, "feature_files": len(features), "rows_per_file": rows,
             "source_rows": manifest["source_total_rows"], "excluded_rows": manifest["excluded_rows"],
             "status": manifest["status"]}
