@@ -16,7 +16,7 @@ import pandas as pd
 from scipy.stats import pearsonr, spearmanr
 
 
-FEATURES = ("Vx", "flow_speed", "proton_density", "T", "F", "Xs", "Xl", "P4", "P5", "P6", "USFLUXL", "R_VALUE")
+FEATURES = ("Vx", "flow_speed", "proton_density", "T", "F", "Xs", "Xl", "P4", "P5", "P6")
 LOG_FEATURES = frozenset(("Xs", "Xl", "P4", "P5", "P6", "USFLUXL"))
 FEATURE_UNITS = {"Vx": "km/s", "flow_speed": "km/s", "proton_density": "cm^-3", "T": "K", "F": "nT",
                  "Xs": "W/m^2", "Xl": "W/m^2", "P4": "cm^-2 s^-1 sr^-1 MeV^-1", "P5": "cm^-2 s^-1 sr^-1 MeV^-1",
@@ -180,8 +180,6 @@ def _multi_heatmaps(tables, features, outdir, name, plt, artifacts):
     fig, axes = plt.subplots(1, len(tables), figsize=(6*len(tables), 6), squeeze=False)
     for ax, (title, table, statistic) in zip(axes[0], tables):
         _heatmap(ax, _matrix(table, features, statistic), title, fig)
-    fig.text(0.5, 0.01, "One row = one flare window. Flux-log: positive Xs/Xl/P4/P5/P6/USFLUXL summaries use log10; R_VALUE is unchanged.",
-             ha="center", fontsize=8)
     _save(fig, outdir / name, plt, artifacts)
 
 
@@ -209,8 +207,7 @@ def _distribution_panels(values_by_feature, labels, outdir, name, ylabel, plt, a
         ax.set_xticklabels(["NSEP n={}".format(ns[0]), "SEP n={}".format(ns[1])])
         if log_scale and feature in LOG_FEATURES and any(ns):
             ax.set_yscale("log")
-        suffix = " (already log)" if feature == "R_VALUE" else " (log axis; positive only)" if log_scale and feature in LOG_FEATURES else ""
-        ax.set(title=feature + suffix, ylabel=ylabel.replace("native units", FEATURE_UNITS[feature]))
+        ax.set(title=feature, ylabel=ylabel.replace("native units", FEATURE_UNITS[feature]))
         ax.tick_params(axis="x", labelsize=8)
         ax.grid(axis="y", alpha=0.2)
     for ax in axes.ravel()[len(values_by_feature):]:
@@ -222,7 +219,7 @@ def _distribution_panels(values_by_feature, labels, outdir, name, ylabel, plt, a
 def run_paper_figures(dataset_dir, outdir, features=FEATURES, min_pairs=5, native_min_points=3):
     """Add publication diagnostics without modifying datasets or old figures.
 
-    Default requires all twelve feature files. Passing a feature subset enables
+    Default uses only the original ten feature files. Passing a feature subset enables
     focused inspection. Each data row, never each five-minute cell, is a sample
     for feature correlations. Native-only sensitivity uses O-coded points only.
     """
@@ -340,11 +337,11 @@ def run_paper_figures(dataset_dir, outdir, features=FEATURES, min_pairs=5, nativ
     pd.DataFrame(era_rows, columns=["feature_a", "feature_b", "n_pairwise", "pearson_r", "spearman_rho", "status",
                                    "era_a", "era_b", "group", "policy", "aggregate", "transform"]).to_csv(outdir/"correlations_by_instrument_era.csv", index=False)
     get = lambda policy="filled", transform="physical_log", group="all": cache[(policy, "mean", transform, group)]
-    _multi_heatmaps([("Window means: flux-log Pearson", get(), "pearson_r"), ("Window means: flux-log Spearman", get(), "spearman_rho")], features, outdir, "correlations_primary", plt, artifacts)
-    _multi_heatmaps([("Filled values: Spearman", get(), "spearman_rho"), ("Native O-coded points only: Spearman", get("native_only"), "spearman_rho")], features, outdir, "correlations_native_vs_filled", plt, artifacts)
-    _multi_heatmaps([("SEP window means: Spearman", get(group="SEP"), "spearman_rho"), ("NSEP window means: Spearman", get(group="NSEP"), "spearman_rho")], features, outdir, "correlations_sep_vs_nsep", plt, artifacts)
-    _multi_heatmaps([("Raw window means: Pearson", get(transform="raw"), "pearson_r"), ("Flux-log window means: Pearson", get(), "pearson_r")], features, outdir, "correlations_raw_vs_flux_log", plt, artifacts)
-    era_plots = [(str(period), get(group=str(period)), "spearman_rho") for period in np.unique(periods)]
+    _multi_heatmaps([("Window means: Pearson (log₁₀ fluxes)", get(), "pearson_r"), ("Window means: Spearman (log₁₀ fluxes)", get(), "spearman_rho")], features, outdir, "correlations_primary", plt, artifacts)
+    _multi_heatmaps([("All saved values: Spearman (log₁₀ fluxes)", get(), "spearman_rho"), ("Observed values: Spearman (log₁₀ fluxes)", get("native_only"), "spearman_rho")], features, outdir, "correlations_native_vs_filled", plt, artifacts)
+    _multi_heatmaps([("SEP window means: Spearman (log₁₀ fluxes)", get(group="SEP"), "spearman_rho"), ("NSEP window means: Spearman (log₁₀ fluxes)", get(group="NSEP"), "spearman_rho")], features, outdir, "correlations_sep_vs_nsep", plt, artifacts)
+    _multi_heatmaps([("Original units: Pearson", get(transform="raw"), "pearson_r"), ("Log-transformed fluxes: Pearson", get(), "pearson_r")], features, outdir, "correlations_raw_vs_flux_log", plt, artifacts)
+    era_plots = [(str(period) + ": Spearman (log₁₀ fluxes)", get(group=str(period)), "spearman_rho") for period in np.unique(periods)]
     _multi_heatmaps(era_plots, features, outdir, "correlations_by_calendar_cohort", plt, artifacts)
     _distribution_panels({f: matrices[("filled", "mean")][f].to_numpy() for f in features}, labels, outdir, "window_mean_distributions", "Window mean (native units)", plt, artifacts, log_scale=True)
     _distribution_panels(iqr_values, labels, outdir, "window_variability_distributions", "Within-window IQR (native units)", plt, artifacts, log_scale=True)
@@ -371,30 +368,34 @@ def run_paper_figures(dataset_dir, outdir, features=FEATURES, min_pairs=5, nativ
                     yerr=np.vstack([y[valid]-subset.q25.to_numpy()[valid], subset.q75.to_numpy()[valid]-y[valid]]),
                     fmt="o", color=color, label="NSEP" if label == 0 else "SEP")
     ax.axhline(0, color="0.5", lw=1)
-    ax.set(xticks=np.arange(len(features)), xticklabels=features, ylabel="(Filled mean − native-only mean) / filled IQR", title="Paired sensitivity to filling and derived/held values")
+    ax.set(xticks=np.arange(len(features)), xticklabels=features, ylabel="Mean difference / saved-data IQR", title="Saved versus observed-only window means")
     ax.tick_params(axis="x", rotation=45)
     ax.legend(frameon=False)
     _save(fig, outdir/"native_vs_filled_sensitivity", plt, artifacts)
     fig, axes = plt.subplots(1, 2, figsize=(16, 5))
     before_column = "fraction_missing_before_offline_cleaning_retained_rows" if cleaned and "fraction_missing_before_offline_cleaning_retained_rows" in coverage else "fraction_missing_before_gap_fill_known_only"
-    before_title = "Before offline filling: retained cohort" if before_column.startswith("fraction_missing_before_offline") else "Before gap fill: known provenance only"
-    for ax, column, title in ((axes[0], before_column, before_title), (axes[1], "fraction_missing_after_filling", "After filling: all saved rows")):
+    before_title = "Before final filling (retained rows)" if before_column.startswith("fraction_missing_before_offline") else "Before gap filling (audited points)"
+    for ax, column, title in ((axes[0], before_column, before_title), (axes[1], "fraction_missing_after_filling", "After filling")):
         pivot = coverage.pivot(index="feature", columns="year", values=column).reindex(features)
         im = ax.imshow(pivot, vmin=0, vmax=1, cmap="YlOrRd", aspect="auto")
         ax.set(yticks=np.arange(len(features)), yticklabels=features, xticks=np.arange(len(pivot.columns)), xticklabels=pivot.columns.astype(str), title=title)
         ax.tick_params(axis="x", rotation=90, labelsize=7)
-        fig.colorbar(im, ax=ax, label="Fraction missing; blank = unavailable audit")
+        fig.colorbar(im, ax=ax, label="Fraction missing")
     _save(fig, outdir/"missingness_before_after_by_year", plt, artifacts)
     aggregated = methods.groupby(["feature", "status_code"]).points.sum().unstack("status_code").reindex(features).reindex(columns=list(STATUS_CODES), fill_value=0)
     fractions = aggregated.div(aggregated.sum(axis=1), axis=0)
     fractions.to_csv(outdir/"point_method_fractions.csv")
     fig, ax = plt.subplots(figsize=(12, 6))
     fractions.plot.barh(stacked=True, ax=ax, colormap="tab10")
-    ax.set(xlim=(0, 1), xlabel="Fraction of saved feature points", title="Observed, derived, held, filled and unavailable provenance")
-    ax.legend(title="Point-status code (see methods manifest)", bbox_to_anchor=(1.01, 1), loc="upper left")
+    ax.set(xlim=(0, 1), xlabel="Fraction of data points", title="Measurement and processing status")
+    status_labels = {"O": "Observed", "I": "Interpolated", "E": "Edge filled", "M": "Median filled",
+                     "S": "Unavailable", "G": "Unfilled gap", "U": "Historical provenance unknown",
+                     "D": "Estimated", "H": "Held"}
+    handles, labels_status = ax.get_legend_handles_labels()
+    ax.legend(handles, [status_labels[label] for label in labels_status], title="Status", bbox_to_anchor=(1.01, 1), loc="upper left")
     _save(fig, outdir/"point_method_fractions", plt, artifacts)
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-    for ax, column, title in zip(axes, ("native_fraction_all_points", "derived_fraction_all_points", "held_fraction_all_points"), ("Native O-coded", "SGPS-derived D-coded", "Causal held H-coded")):
+    for ax, column, title in zip(axes, ("native_fraction_all_points", "derived_fraction_all_points", "held_fraction_all_points"), ("Observed", "Estimated", "Held")):
         pivot = coverage.pivot(index="feature", columns="year", values=column).reindex(features)
         im = ax.imshow(pivot, vmin=0, vmax=1, cmap="YlGnBu", aspect="auto")
         ax.set(yticks=np.arange(len(features)), yticklabels=features, xticks=np.arange(len(pivot.columns)), xticklabels=pivot.columns.astype(str), title=title)
@@ -406,9 +407,9 @@ def run_paper_figures(dataset_dir, outdir, features=FEATURES, min_pairs=5, nativ
     for ax, feature in zip(axes.ravel(), features):
         for policy, color in (("filled", "#bb5b52"), ("native_only", "#447c88")):
             subset = time_associations[time_associations.feature.eq(feature) & time_associations.policy.eq(policy)]
-            ax.plot(subset.hours_before_aligned_flare, subset.pearson_label_r, label=policy, color=color, lw=1.3)
+            ax.plot(subset.hours_before_aligned_flare, subset.pearson_label_r, label="All saved values" if policy == "filled" else "Observed values", color=color, lw=1.3)
         ax.axhline(0, color="0.6", lw=0.7)
-        ax.set(xlim=(24, 0), ylim=(-1, 1), title=feature + (" (log10 points)" if feature in LOG_FEATURES else ""), xlabel="Hours before aligned flare", ylabel="Label association r")
+        ax.set(xlim=(24, 0), ylim=(-1, 1), title=feature, xlabel="Hours before flare onset", ylabel="Label correlation, r (log₁₀ flux)" if feature in LOG_FEATURES else "Label correlation, r")
     axes.ravel()[0].legend(fontsize=8, frameon=False)
     for ax in axes.ravel()[len(features):]:
         ax.axis("off")

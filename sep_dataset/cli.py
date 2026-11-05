@@ -7,7 +7,8 @@ from pathlib import Path
 LEGACY_DIR = "data/processed/compatible_1998_2025"
 ENHANCED_DIR = "data/processed/enhanced_1998_2025"
 CLEANED_DIR = "data/processed/cleaned_1998_2025"
-FIGURE_DIR = "reports/figures_cleaned_1998_2025"
+FIGURE_DIR = "reports/figures_paper_10features_1998_2025"
+PLOT_FEATURES = ("Vx", "flow_speed", "proton_density", "T", "F", "Xs", "Xl", "P4", "P5", "P6")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -36,14 +37,15 @@ def build_parser() -> argparse.ArgumentParser:
     plot = sub.add_parser("plot", help="Original time-series/PCA figures plus new correlations, distributions and coverage diagnostics.")
     plot.add_argument("--dataset-dir", default=CLEANED_DIR)
     plot.add_argument("--outdir", default=FIGURE_DIR)
-    plot.add_argument("--bands", nargs="+", type=int, choices=[10, 30, 60, 100], default=[10, 30, 60, 100])
-    plot.add_argument("--features", nargs="+", choices=["Vx", "flow_speed", "proton_density", "T", "F", "Xs", "Xl", "P4", "P5", "P6", "USFLUXL", "R_VALUE"])
+    plot.add_argument("--bands", nargs="+", type=int, choices=[5, 10, 30, 60, 100], default=[5, 10, 30, 60, 100])
+    plot.add_argument("--features", nargs="+", choices=PLOT_FEATURES, help="Original ten features only; all ten are plotted by default.")
     plot.add_argument("--tsne", action="store_true")
     plot.add_argument("--tsne-max-samples", type=int, default=3000)
     plot.add_argument("--original-figures-only", action="store_true")
     paper = sub.add_parser("paper-plot", help="Run only the new publication diagnostics, including correlations.")
     paper.add_argument("--dataset-dir", default=CLEANED_DIR)
     paper.add_argument("--outdir", default=FIGURE_DIR + "/paper")
+    paper.add_argument("--features", nargs="+", choices=PLOT_FEATURES, default=PLOT_FEATURES)
     valid = sub.add_parser("validate", help="Verify all files, exact sample alignment, checksums and per-point quality masks.")
     valid.add_argument("--dataset-dir", default=CLEANED_DIR)
     return parser
@@ -87,6 +89,60 @@ def _validate_release(root, manifest):
     return validate_dataset(root)
 
 
+def _validate_plot_inputs(root, manifest, features):
+    """Verify selected inputs without requiring excluded feature datasets.
+
+    Check schema, checksums, labels, metadata alignment and quality identifiers
+    before rendering. Full release validation remains a separate command.
+    """
+    from .compatible_builder import file_sha256
+    import pandas as pd
+    if not features or len(set(features)) != len(features):
+        raise ValueError("Choose distinct plotting features")
+    entries = {entry["feature"]: entry for entry in manifest.get("feature_files", [])}
+    metadata_columns = manifest.get("metadata_columns", [])
+    if len(metadata_columns) != 52 or not {"FlrOnset", "event_type"}.issubset(metadata_columns):
+        raise ValueError("Plotting requires the original 52 metadata columns")
+    reference_metadata, reference_ids = None, None
+    for feature in features:
+        if feature not in entries:
+            raise ValueError(f"Dataset manifest lacks plotting feature {feature}")
+        entry = entries[feature]
+        matches = sorted(root.glob(f"*_with_{feature}_filled.csv"))
+        if len(matches) != 1 or matches[0].name != entry.get("filename"):
+            raise ValueError(f"Expected the manifest dataset file for {feature} in {root}")
+        if entry.get("sha256") and file_sha256(matches[0]) != entry["sha256"]:
+            raise ValueError(f"Dataset checksum mismatch for {feature}")
+        quality = root / "quality" / f"{feature}_quality.csv"
+        if entry.get("quality_sha256") and (not quality.is_file() or file_sha256(quality) != entry["quality_sha256"]):
+            raise ValueError(f"Quality checksum mismatch for {feature}")
+        expected = metadata_columns + [f"{feature}_{i}" for i in range(288, 0, -1)]
+        if pd.read_csv(matches[0], nrows=0).columns.tolist() != expected:
+            raise ValueError(f"Plotting schema mismatch for {feature}")
+        metadata = pd.read_csv(matches[0], usecols=metadata_columns, float_precision="round_trip", low_memory=False)
+        if len(metadata) != manifest.get("total_rows_per_feature", entry.get("rows")):
+            raise ValueError(f"Plotting row count mismatch for {feature}")
+        if not metadata.event_type.isin([0, 1]).all():
+            raise ValueError(f"Invalid SEP/NSEP labels for {feature}")
+        if reference_metadata is None:
+            reference_metadata = metadata
+        else:
+            pd.testing.assert_frame_equal(reference_metadata, metadata, check_dtype=False, check_exact=True)
+        if quality.is_file():
+            q = pd.read_csv(quality, usecols=lambda c: c in ("row_index", "sample_id", "point_status"), dtype={"sample_id": str, "point_status": str})
+            if len(q) != len(metadata) or "row_index" not in q or q.row_index.tolist() != list(range(len(metadata))):
+                raise ValueError(f"Misaligned plotting quality rows for {feature}")
+            if "point_status" in q and not q.point_status.str.fullmatch("[OIEMSGUDH]{288}").all():
+                raise ValueError(f"Invalid plotting quality mask for {feature}")
+            if "sample_id" in q:
+                if reference_ids is None:
+                    reference_ids = q.sample_id
+                elif not reference_ids.equals(q.sample_id):
+                    raise ValueError(f"Plotting sample identifiers differ across features: {feature}")
+        print(f"[PLOT CHECK] {feature}: {len(metadata)} samples", flush=True)
+    return {"valid": True, "feature_files": len(features)}
+
+
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
     if args.command == "build":
@@ -103,18 +159,11 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "clean":
         _clean(args.dataset_dir, args.outdir)
     elif args.command == "plot":
-        from .compatible_figures import FEATURES, EXTRA_FEATURES, run_compatible_figures
+        from .compatible_figures import run_compatible_figures
         root = Path(args.dataset_dir)
-        if args.features:
-            features = tuple(args.features)
-        else:
-            completed = _completed_manifest(root)
-            features = tuple(entry["feature"] for entry in completed["feature_files"])
-        manifest = root / "dataset_manifest.json"
-        if manifest.exists():
-            data = json.loads(manifest.read_text())
-            if data.get("workflow") in ("enhanced_twelve_feature_research_release", "cleaned_twelve_feature_release"):
-                _validate_release(root, data)
+        completed = _completed_manifest(root)
+        features = tuple(args.features) if args.features else PLOT_FEATURES
+        _validate_plot_inputs(root, completed, features)
         run_compatible_figures(root, args.outdir, bands=args.bands, features=features,
                                tsne=args.tsne, tsne_max_samples=args.tsne_max_samples)
         if not args.original_figures_only:
@@ -125,9 +174,9 @@ def main(argv: list[str] | None = None) -> None:
         from .paper_figures import run_paper_figures
         root = Path(args.dataset_dir)
         completed = _completed_manifest(root)
-        if completed.get("workflow") in ("enhanced_twelve_feature_research_release", "cleaned_twelve_feature_release"):
-            _validate_release(root, completed)
-        run_paper_figures(root, args.outdir, features=tuple(entry["feature"] for entry in completed["feature_files"]))
+        features = tuple(args.features)
+        _validate_plot_inputs(root, completed, features)
+        run_paper_figures(root, args.outdir, features=features)
     else:
         root = Path(args.dataset_dir)
         manifest = _completed_manifest(root, "validation")

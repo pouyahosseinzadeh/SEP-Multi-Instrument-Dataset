@@ -30,7 +30,7 @@ def test_validate_dispatches_to_cleaned_validator(tmp_path, monkeypatch):
     assert calls == [tmp_path]
 
 
-def test_plot_validates_and_uses_all_twelve_cleaned_features(tmp_path, monkeypatch):
+def test_plot_validates_and_uses_only_ten_cleaned_features(tmp_path, monkeypatch):
     from sep_dataset import compatible_figures, paper_figures
 
     source, output = tmp_path / "cleaned", tmp_path / "figures"
@@ -40,12 +40,14 @@ def test_plot_validates_and_uses_all_twelve_cleaned_features(tmp_path, monkeypat
         "feature_files": [{"feature": feature} for feature in FEATURES],
     }))
     calls = []
-    monkeypatch.setattr(cleaned_builder, "validate_cleaned_dataset", lambda root: calls.append(("validate", Path(root))) or {"valid": True})
+    monkeypatch.setattr(cli, "_validate_plot_inputs", lambda root, manifest, features: calls.append(("validate", Path(root), tuple(features))) or {"valid": True})
     monkeypatch.setattr(compatible_figures, "run_compatible_figures", lambda root, outdir, **kw: calls.append(("profiles", Path(root), Path(outdir), kw)))
     monkeypatch.setattr(paper_figures, "run_paper_figures", lambda root, outdir, **kw: calls.append(("paper", Path(root), Path(outdir), kw)))
     cli.main(["plot", "--dataset-dir", str(source), "--outdir", str(output)])
     assert [call[0] for call in calls] == ["validate", "profiles", "paper"]
     assert calls[1][1:3] == (source, output)
-    assert tuple(calls[1][3]["features"]) == FEATURES
+    assert calls[0][2] == cli.PLOT_FEATURES
+    assert tuple(calls[1][3]["features"]) == cli.PLOT_FEATURES
+    assert calls[1][3]["bands"] == [5, 10, 30, 60, 100]
     assert calls[2][1:3] == (source, output / "paper")
-    assert tuple(calls[2][3]["features"]) == FEATURES
+    assert tuple(calls[2][3]["features"]) == cli.PLOT_FEATURES

@@ -1,5 +1,7 @@
 # Historical preservation and extension methodology
 
+The source and filling policies below describe the strict original ten-feature archive in `compatible_1998_2025`. The enhanced archive and final cleaned release have additional processing documented in [ENHANCED_DATASET.md](ENHANCED_DATASET.md) and [CLEANED_DATASET.md](CLEANED_DATASET.md). Current paper figures read the existing cleaned files and include only the original ten features.
+
 ## Preserved dataset
 
 The frozen historical files come from [Zenodo record 17595580](https://zenodo.org/records/17595580), or from the user's `--baseline-dir`. Their 17,794 rows comprise 252 SEP and 17,542 NSEP samples. All metadata, labels, row order and 288-point feature blocks in the chosen baseline remain unchanged. The published extra `Label` column is dropped; `event_type` and the original 52-column metadata schema remain. CSV formatting may change; validation checks historical numerical values and metadata against fingerprints. Published CSV serialization differs at floating-point rounding precision from some local originals; `--baseline-dir` preserves those specific local values exactly.
@@ -65,9 +67,30 @@ An explicitly empty HAPI interval is recorded as an observational gap, including
 
 ## Figure compatibility
 
-The original comparisons use `event_type == 1` and `sep_peak_2 >= 10` for >10 MeV. The >30, >60 and >100 MeV comparisons use `sep_peak_3`, `sep_peak_4`, `sep_peak_5 >= 5` respectively. Controls are all `event_type == 0` flare rows. The energy inequality denotes the integral channel; its peak threshold is in pfu.
+From the updated project folder, regenerate figures from saved datasets with:
 
-Means, normal-approximation pointwise 95% confidence intervals and Welch tests follow the original notebook. Additional BH q-values are explicitly corrected within each feature/band's time-point tests. PCA uses all 288 columns standardized jointly over selected SEP/NSEP rows, matching the original per-feature method. These are descriptive fits, not held-out validation. Optional t-SNE records sampling and its seed.
+```bash
+.venv/bin/python -u -m sep_dataset.cli plot \
+  --dataset-dir data/processed/cleaned_1998_2025 \
+  --outdir reports/figures_paper_10features_1998_2025 \
+  --bands 5 10 30 60 100
+```
+
+This command performs no dataset download or modification. USFLUXL and R_VALUE are excluded from every figure and plotted summary; the selected ten feature inputs are checked before plotting. The saved cohort and labels are unchanged, including any exclusions already applied during twelve-feature cleaning.
+
+All energy groups require `event_type == 1` for SEP rows:
+
+| Integral energy group | Peak column | Minimum peak flux |
+|---|---|---:|
+| >5 MeV (new figure group) | `sep_peak_1` | 5 pfu |
+| >10 MeV | `sep_peak_2` | 10 pfu |
+| >30 MeV | `sep_peak_3` | 5 pfu |
+| >60 MeV | `sep_peak_4` | 5 pfu |
+| >100 MeV | `sep_peak_5` | 5 pfu |
+
+The four original cuts are unchanged. Controls are all saved `event_type == 0` flare rows. The energy inequality denotes the integral channel; its peak threshold is a separate value in pfu. These groups use the existing peak metadata and do not require fluence values or recollection.
+
+Mean profiles retain shaded normal-approximation pointwise 95% confidence intervals. Welch p-values, BH q-values corrected within each feature/band, and source notes remain in statistical CSVs and manifests. Method/source footers and significance markers are omitted from figures to keep the images concise. PCA uses all 288 columns standardized jointly over selected SEP/NSEP rows, matching the original per-feature method. These are descriptive fits, not held-out validation. Optional t-SNE records sampling and its seed.
 
 Entirely unavailable windows are omitted from means and PCA and counted in the reports. Score files retain sample identifiers and provenance when supplied. Yearly feature availability exposes gaps. Imputation, calibration era, class imbalance, temporal dependence and association uncertainty require sensitivity analysis before scientific claims.
 

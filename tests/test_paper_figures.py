@@ -108,15 +108,15 @@ class PaperFigureTests(unittest.TestCase):
     def test_complete_diagnostics_export_methods_counts_and_all_figures(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for feature in ("Vx", "P4", "R_VALUE"):
+            for feature in ("Vx", "P4", "Xs"):
                 self._dataset(root, feature)
             out = root/"figures"
-            result = run_paper_figures(root, out, features=("Vx", "P4", "R_VALUE"))
+            result = run_paper_figures(root, out, features=("Vx", "P4", "Xs"))
             self.assertEqual(len(result["figure_files"]), 24)
             self.assertTrue(all(Path(path).is_file() for path in result["figure_files"]))
             manifest = json.loads(Path(result["manifest"]).read_text())
             self.assertEqual(manifest["sample_windows"], 12)
-            self.assertIn("already logarithmic", manifest["transforms"]["R_VALUE"])
+            self.assertIn("log10", manifest["transforms"]["Xs"])
             correlations = pd.read_csv(out/"feature_correlations.csv")
             self.assertLessEqual(correlations.n_pairwise.max(), 12)
             self.assertTrue((out/"correlations_by_instrument_era.csv").is_file())

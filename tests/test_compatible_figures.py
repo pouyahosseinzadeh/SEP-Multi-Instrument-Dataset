@@ -3,6 +3,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -15,19 +16,29 @@ from sep_dataset.compatible_figures import (
 
 
 class CompatibleFigureTests(unittest.TestCase):
-    def test_original_energy_cuts_use_correct_peak_columns(self):
+    def test_energy_cuts_use_correct_peak_columns_including_five_mev(self):
         # A >10-MeV NOAA event is not automatically a >100-MeV event.
         frame = pd.DataFrame({"event_type": [0, 1, 1, 1],
+                              "sep_peak_1": [999, 5, 4.99, 100],
                               "sep_peak_2": [999, 10, 9.99, 100],
                               "sep_peak_3": [999, 4.99, 5, np.nan],
                               "sep_peak_4": [999, 5, 0.1, 4],
                               "sep_peak_5": [999, np.nan, 5, 4.99]})
-        expected = {10: [False, True, False, True], 30: [False, False, True, False],
+        expected = {5: [False, True, False, True],
+                    10: [False, True, False, True], 30: [False, False, True, False],
                     60: [False, True, False, False], 100: [False, False, True, False]}
+        self.assertEqual(set(BAND_SELECTION), set(expected))
         for band in BAND_SELECTION:
             sep, nsep = band_masks(frame, band)
             np.testing.assert_array_equal(sep, expected[band])
             np.testing.assert_array_equal(nsep, [True, False, False, False])
+
+    def test_five_mev_group_excludes_missing_peaks_and_non_sep_rows(self):
+        frame = pd.DataFrame({"event_type": [1, 1, 1, 1, 1, 0],
+                              "sep_peak_1": [5.0, 4.999, np.nan, -9999.0, 0.0, 500.0]})
+        sep, nsep = band_masks(frame, 5)
+        np.testing.assert_array_equal(sep, [True, False, False, False, False, False])
+        np.testing.assert_array_equal(nsep, [False, False, False, False, False, True])
 
     def test_original_normal_ci_and_welch_test_are_preserved(self):
         rng = np.random.RandomState(5)
@@ -95,7 +106,9 @@ class CompatibleFigureTests(unittest.TestCase):
             mixed_onsets = list(pd.date_range("2013-01-01", periods=8, freq="D").astype(str))
             mixed_onsets += list(pd.date_range("2025-01-01", periods=4, freq="D", tz="UTC").astype(str))
             frame = pd.DataFrame({"FlrOnset": mixed_onsets,
-                                  "event_type": [0]*8+[1]*4, "sep_peak_2": [0]*8+[12]*4})
+                                  "event_type": [0]*8+[1]*4,
+                                  "sep_peak_1": [0]*8+[5, 8, 20, 30],
+                                  "sep_peak_2": [0]*8+[12]*4})
             frame = pd.concat([frame, pd.DataFrame(rng.normal(size=(12, 288)), columns=timeseries_columns("Vx"))], axis=1)
             frame.to_csv(dataset / "1998_2025_MEMSEP_dataset_with_Vx_filled.csv", index=False)
             pd.DataFrame({"feature": ["Vx"], "missing_fraction_before": [0.5], "missing_fraction_after": [0.0]}).to_csv(dataset / "quality_summary.csv", index=False)
@@ -103,16 +116,39 @@ class CompatibleFigureTests(unittest.TestCase):
             pd.DataFrame({"row_index": np.arange(12), "sample_id": ["sample{}".format(i) for i in range(12)],
                           "origin": ["baseline"]*8+["extension"]*4, "unavailable_channel": [False]*12,
                           "observed_points": [np.nan]*8+[144]*4, "median_filled_points": [np.nan]*8+[0]*4}).to_csv(dataset / "quality" / "Vx_quality.csv", index=False)
-            result = run_compatible_figures(dataset, root / "figures", bands=(10,), features=("Vx",))
+            # The existing cleaned data can retain provenance in numerical
+            # tables without printing methods footnotes across every figure.
+            (dataset / "dataset_manifest.json").write_text(json.dumps({"workflow": "cleaned_twelve_feature_release"}))
+            from matplotlib.figure import Figure
+            drawn_text = []
+            original_text = Figure.text
+
+            def record_text(fig, x, y, text, *args, **kwargs):
+                drawn_text.append(str(text))
+                return original_text(fig, x, y, text, *args, **kwargs)
+
+            with patch.object(Figure, "text", record_text):
+                result = run_compatible_figures(dataset, root / "figures", bands=(5, 10), features=("Vx",))
             manifest = json.loads(Path(result["manifest"]).read_text())
             self.assertEqual(manifest["features"]["Vx"]["bands"]["10"]["sep_samples"], 4)
             self.assertTrue(manifest["quality"]["prefill_quality_available"])
             self.assertTrue((root / "figures" / "figs_gt10" / "curves_Vx_gt10.png").is_file())
             self.assertTrue((root / "figures" / "figs_gt10" / "Vx_pca_loadings_heatmap.pdf").is_file())
+            self.assertTrue((root / "figures" / "figs_gt5" / "curves_Vx_gt5.png").is_file())
+            self.assertEqual(manifest["band_selection"]["5"], {"peak_column": "sep_peak_1", "minimum_peak_pfu": 5.0})
             quality = pd.read_csv(root / "figures" / "feature_quality_summary.csv")
             self.assertEqual(quality.prefill_rows_without_audit.iloc[0], 8)
             self.assertEqual(quality.audited_missing_fraction_before.iloc[0], 0.5)
-            self.assertEqual(len(pd.read_csv(root / "figures" / "figs_gt10" / "Vx_profile_statistics.csv")), 288)
+            for band in (5, 10):
+                stats = pd.read_csv(root / "figures" / f"figs_gt{band}" / "Vx_profile_statistics.csv")
+                self.assertEqual(len(stats), 288)
+                for column in ("p_value", "q_value_bh_within_feature_band", "sep_ci95_halfwidth", "nsep_ci95_halfwidth"):
+                    self.assertTrue(np.isfinite(stats[column]).all(), column)
+                np.testing.assert_allclose(stats.q_value_bh_within_feature_band, adjust_pvalues_bh(stats.p_value))
+                self.assertIn("source_definition_note", stats.columns)
+            rendered = "\n".join(drawn_text).lower()
+            for phrase in ("pointwise cis", "bh correction across", "raw welch", "bh q <", "legacy measurements + flagged", "partial windows interpolated/edge-filled"):
+                self.assertNotIn(phrase, rendered)
             scores = pd.read_csv(root / "figures" / "figs_gt10" / "Vx_pca_scores.csv")
             self.assertEqual(scores.sample_id.iloc[0], "sample0")
             self.assertEqual(scores.origin.iloc[-1], "extension")

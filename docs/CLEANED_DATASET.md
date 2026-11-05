@@ -2,19 +2,35 @@
 
 The final offline cleanup applies the same rule to every feature: fill partially available rows from values within that row, and exclude a sample from all twelve files if any feature row is entirely unavailable after source-fill masking. A shared exclusion mask preserves sample identities, ordering, metadata and SEP/NSEP labels across feature files.
 
-## Existing completed downloads
+## Regenerate figures from an existing cleaned release
 
-From your updated project folder, run:
+Keep `data/processed/cleaned_1998_2025` and run this from the updated project folder:
+
+```bash
+.venv/bin/python -u -m sep_dataset.cli plot \
+  --dataset-dir data/processed/cleaned_1998_2025 \
+  --outdir reports/figures_paper_10features_1998_2025 \
+  --bands 5 10 30 60 100
+```
+
+Plotting reads saved files and does not download, clean or rewrite datasets. All figures and correlations use only Vx, flow_speed, proton_density, T, F, Xs, Xl, P4, P5 and P6. USFLUXL and R_VALUE are excluded from plotted summaries, and their CSVs are not required by plot validation.
+
+The >5 MeV figure group selects `event_type == 1` rows with `sep_peak_1 >= 5` pfu. The original >10, >30, >60 and >100 MeV selections are unchanged; NSEP controls remain all saved `event_type == 0` rows. Profiles retain shaded 95% confidence intervals. Method/source footers and significance overlays are removed from the images; statistical tests and source notes remain in CSVs and manifests.
+
+The figures describe the cohort already saved in these cleaned files. Excluding magnetic features from plots does not change that cohort or restore previously excluded rows. The new output folder keeps this figure set separate from older runs.
+
+## Create a cleaned release from a completed source archive
+
+This is a separate data-processing step for an archive that has not yet been cleaned:
 
 ```bash
 .venv/bin/python -u -m sep_dataset.cli clean
 .venv/bin/python -m sep_dataset.cli validate
-.venv/bin/python -u -m sep_dataset.cli plot
 ```
 
 `clean` reads `data/processed/enhanced_1998_2025` and writes `data/processed/cleaned_1998_2025`. It performs no source download and does not require a raw-cache rebuild. New `build` and `enhance` runs invoke cleanup after completing the source archive. `--clean-outdir` selects a different final output for those commands. `clean --dataset-dir PATH --outdir PATH` selects existing source and final folders directly. Source and final folders must be different.
 
-Default `validate`, `plot` and `paper-plot` use the cleaned output. Figures are written to `reports/figures_cleaned_1998_2025`. Explicit `--dataset-dir` still permits inspecting a source archive with gaps.
+Default `validate`, `plot` and `paper-plot` use the cleaned output. The separate `validate` command checks the full data release; plot commands check only their selected original feature inputs. Figures are written to `reports/figures_paper_10features_1998_2025`. Explicit `--dataset-dir` still permits inspecting a source archive with gaps.
 
 ## Invalid values
 

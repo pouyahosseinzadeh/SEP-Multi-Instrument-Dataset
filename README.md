@@ -1,24 +1,37 @@
-# SEP dataset project — twelve features through 2025
+# SEP dataset project — data and paper figures through 2025
 
-The default workflow produces **twelve separate feature datasets**: the original ten, plus **USFLUXL** and **R_VALUE**. Final files have the same retained flare samples and SEP/NSEP labels, **52 metadata columns and 288 five-minute feature values**, with no missing feature cells. The source archive preserves the original 17,794 historical rows and the extension through December 31, 2025.
+## Regenerate figures from your existing datasets
 
-**Final filling and exclusions are explicit.** Source `-9999`, nonfinite values, and documented positive OMNI fill codes are recognized before cleaning. Partially available rows receive linear interpolation inside that row and nearest-value extension at its edges. A row with no usable measurement in any feature is removed from **all twelve files**, preserving alignment. No whole row is invented from other samples or class medians. New filled cells are flagged `I`/`E`; measured, derived, held and historical provenance remain distinct. Metadata fields can still be unavailable; the no-missing guarantee applies to the 288 feature columns. See [docs/CLEANED_DATASET.md](docs/CLEANED_DATASET.md).
-
-Original EPEAD P4/P5/P6 measurements end in March 2020. SGPS-derived estimates at 30.6, 63.1 and 165 MeV are documented separately from native legacy measurements. Magnetic variables use MDI/HMI measurements with explicit instrument and sampling limits. Interpolation does not establish cross-instrument calibration or turn filled cells into observations.
-
-## Already downloaded all twelve datasets
-
-Update the project code, keeping your `data` folder. Run this **offline cleanup**, then validate and regenerate the figures:
+After updating the project code, keep your existing `data` folder. From the project folder, run:
 
 ```bash
-.venv/bin/python -u -m sep_dataset.cli clean
-.venv/bin/python -m sep_dataset.cli validate
-.venv/bin/python -u -m sep_dataset.cli plot
+.venv/bin/python -u -m sep_dataset.cli plot \
+  --dataset-dir data/processed/cleaned_1998_2025 \
+  --outdir reports/figures_paper_10features_1998_2025 \
+  --bands 5 10 30 60 100
 ```
 
-No source download is needed for `clean`. Final files are in `data/processed/cleaned_1998_2025/`; figures are in `reports/figures_cleaned_1998_2025/`. Read `exclusions.csv`, `cohort_counts.csv` and `availability_report.txt` to see the retained population. An entire missing magnetic feature row excludes that sample from all files, so this step can substantially reduce the cohort.
+This reads the saved datasets and regenerates figures and statistical tables. No dataset download, enhancement or cleaning is needed. The saved measurements, labels and retained sample cohort are unchanged.
 
-## Run from your latest downloaded project folder
+All figures use only the original ten features: **Vx, flow_speed, proton_density, T, F, Xs, Xl, P4, P5 and P6**. **USFLUXL and R_VALUE are excluded**, including from correlations, coverage summaries and sample comparisons. Plotting checks only the selected feature inputs; it does not require the excluded magnetic CSVs.
+
+Profiles and PCA are generated for five integral proton energy groups:
+
+| Energy group | SEP selection, in addition to `event_type == 1` |
+|---|---|
+| >5 MeV | `sep_peak_1 >= 5` pfu; added figure group |
+| >10 MeV | `sep_peak_2 >= 10` pfu |
+| >30 MeV | `sep_peak_3 >= 5` pfu |
+| >60 MeV | `sep_peak_4 >= 5` pfu |
+| >100 MeV | `sep_peak_5 >= 5` pfu |
+
+The four original peak cuts are unchanged. Each comparison uses all saved `event_type == 0` samples as NSEP controls. An energy threshold such as >5 MeV describes the integral channel; the peak cutoff is a separate value in pfu.
+
+The fresh output folder is `reports/figures_paper_10features_1998_2025/`. Older figure folders are kept separately and may still contain previous magnetic plots. Omitting magnetic features from figures does not restore samples that an earlier twelve-feature cleanup excluded.
+
+## Collect a new dataset
+
+This separate workflow is for a new collection. It builds twelve feature files: the original ten, plus USFLUXL and R_VALUE. Paper plots use the original ten only.
 
 No patch command or new clone is required. Open a terminal in the folder containing this README.
 
@@ -40,13 +53,17 @@ bash scripts/setup_env.sh
 .venv/bin/python -m sep_dataset.cli validate
 ```
 
-**4. Generate all figures.** This includes the original full-window PCA/profile figures and the new publication diagnostics.
+**4. Generate the paper figures for the original ten features.** This includes the full-window PCA/profile figures and publication diagnostics.
 
 ```bash
 .venv/bin/python -u -m sep_dataset.cli plot
 ```
 
 The main build may need substantial archive downloads. Leave caches in place when resuming. A failed network request is surfaced as an error. Cleaning uses only values within the same pre-flare feature row; excluded samples and filled cells are reported. The source archives and the final cleaned output require separate disk space.
+
+Final files share retained flare samples and SEP/NSEP labels, with 52 metadata columns and 288 five-minute feature values. Source `-9999`, nonfinite values and documented OMNI fill codes are recognized before cleaning. Partial rows receive interpolation and nearest-value extension at the edges. A sample with any wholly unavailable feature is removed from all twelve files. See [docs/CLEANED_DATASET.md](docs/CLEANED_DATASET.md) for the filling policy and exclusion reports.
+
+Original EPEAD P4/P5/P6 measurements end in March 2020. The enhanced archive provides flagged SGPS-derived estimates at 30.6, 63.1 and 165 MeV. The source archive preserves the original 17,794 historical rows and appends data through December 31, 2025; the cleaned release contains the retained cohort. Instrument identity and processing provenance remain available in the source and quality reports.
 
 ## Reuse an already completed ten-feature run
 
@@ -87,20 +104,20 @@ Columns run from `<feature>_288` through `<feature>_1`: 24 hours to five minutes
 
 ## Where the figures are
 
-`reports/figures_cleaned_1998_2025/` contains:
+`reports/figures_paper_10features_1998_2025/` contains:
 
-- `figs_gt10/`, `figs_gt30/`, `figs_gt60/`, `figs_gt100/`: separate feature profiles with pointwise 95% intervals, raw/BH-corrected Welch tests, individual windows, and PCA of all 288 time points.
+- `figs_gt5/`, `figs_gt10/`, `figs_gt30/`, `figs_gt60/`, `figs_gt100/`: feature profiles, individual windows and PCA of all 288 time points. Mean profiles retain shaded 95% confidence intervals.
 - `paper/`: Pearson/Spearman feature correlations, SEP/NSEP and era comparisons, distributions, variability, observed-only sensitivity, missingness and native/derived/held coverage diagnostics.
-- CSV tables of statistics, sample counts, PCA loadings/scores, and manifests describing the methods. Figures are saved as PNG and PDF.
+- CSV tables of statistics, sample counts, PCA loadings/scores, and manifests describing the methods. Welch p-values, BH q-values and source notes remain in these audit outputs. Figures are saved as PNG and PDF, with concise titles and physical units instead of method/source footers or significance-marker overlays.
 
-Feature correlations use **one flare window per sample**, with pairwise counts; five-minute points are not pooled as independent observations. Positive X-ray/proton/unsigned-flux summaries also have explicit log10 variants. **R_VALUE is already logarithmic and is not logged again.** The native-only sensitivity excludes imputed, held, derived and unknown-provenance points.
+Feature correlations use **one flare window per sample**, with pairwise counts; five-minute points are not pooled as independent observations. Positive X-ray/proton summaries also have explicit log10 variants. The native-only sensitivity excludes imputed, held, derived and unknown-provenance points. The magnetic features are absent from every figure and plotted summary.
 
 To regenerate only the additional diagnostics:
 
 ```bash
 .venv/bin/python -m sep_dataset.cli paper-plot \
   --dataset-dir data/processed/cleaned_1998_2025 \
-  --outdir reports/figures_cleaned_1998_2025/paper
+  --outdir reports/figures_paper_10features_1998_2025/paper
 ```
 
 Optional t-SNE is available with `plot --tsne`; it is slower and disabled by default. These are descriptive dataset diagnostics, not measurements of forecasting accuracy.

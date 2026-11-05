@@ -7,7 +7,7 @@ END_DATE="2025-12-31"
 DATASET_DIR="data/processed/cleaned_1998_2025"
 ARCHIVE_DIR="data/processed/enhanced_1998_2025"
 LEGACY_DIR="data/processed/compatible_1998_2025"
-FIGURE_DIR="reports/figures_cleaned_1998_2025"
+FIGURE_DIR="reports/figures_paper_10features_1998_2025"
 BASELINE_DIR=""
 INCLUDE_TSNE=0
 usage() {

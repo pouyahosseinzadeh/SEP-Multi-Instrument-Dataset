@@ -1,7 +1,8 @@
 """Reproduce the original ten-file MEMSEP figure workflow.
 
 All class comparisons use the original flare rows, FlrOnset alignment, 288 time
-samples, energy columns and peak thresholds. PCA is fitted to the complete,
+samples and energy columns. The original peak thresholds are retained, with an
+additional >5 MeV group selected at a minimum peak flux of 5 pfu. PCA is fitted to the complete,
 column-standardized time series, never to window summary statistics. This
 module reads datasets; it does not change measurements or impute new values.
 """
@@ -25,12 +26,20 @@ DISPLAY_NAMES = {
     "T": "ProtonTemp", "F": "F", "Xs": "Xs", "Xl": "Xl", "P4": "P4", "P5": "P5", "P6": "P6",
     "USFLUXL": "USFLUXL", "R_VALUE": "R_VALUE",
 }
+FEATURE_LABELS = {
+    "Vx": "Solar wind $V_x$", "flow_speed": "Solar wind speed",
+    "proton_density": "Proton density", "T": "Proton temperature",
+    "F": "IMF magnitude", "Xs": "Short-wave X-ray flux", "Xl": "Long-wave X-ray flux",
+    "P4": "P4 proton flux", "P5": "P5 proton flux", "P6": "P6 proton flux",
+    "USFLUXL": "Unsigned magnetic flux", "R_VALUE": "Magnetic R index",
+}
 UNITS = {"Vx": "km/s", "flow_speed": "km/s", "proton_density": "cm$^{-3}$",
          "T": "K", "F": "nT", "Xs": "W/m$^2$", "Xl": "W/m$^2$",
          "P4": "protons/(cm$^2$ s sr MeV)", "P5": "protons/(cm$^2$ s sr MeV)",
          "P6": "protons/(cm$^2$ s sr MeV)", "USFLUXL": "Mx", "R_VALUE": "native log R index"}
-# Verified against the original notebook AND its four exported summary tables.
-BAND_SELECTION = {10: ("sep_peak_2", 10.0), 30: ("sep_peak_3", 5.0),
+# The four original cuts match the notebook and exported summary tables.
+# The added >5 MeV display group requires a peak flux of at least 5 pfu.
+BAND_SELECTION = {5: ("sep_peak_1", 5.0), 10: ("sep_peak_2", 10.0), 30: ("sep_peak_3", 5.0),
                   60: ("sep_peak_4", 5.0), 100: ("sep_peak_5", 5.0)}
 NORMAL_95 = 1.959963984540054
 STEP_MINUTES = 5
@@ -42,9 +51,9 @@ def timeseries_columns(feature: str) -> list:
 
 
 def band_masks(frame: pd.DataFrame, band: int) -> Tuple[np.ndarray, np.ndarray]:
-    """Original selection: threshold-qualified SEP rows versus ALL NSEP rows."""
+    """Select threshold-qualified SEP rows versus all original NSEP rows."""
     if band not in BAND_SELECTION:
-        raise ValueError("Supported energy bands are 10, 30, 60 and 100 MeV")
+        raise ValueError("Supported energy bands are 5, 10, 30, 60 and 100 MeV")
     peak_column, threshold = BAND_SELECTION[band]
     for col in ("event_type", peak_column):
         if col not in frame:
@@ -180,32 +189,18 @@ def _save(fig, base: Path, plt, artifacts: list) -> None:
     plt.close(fig)
 
 
-def _source_note(fig, table):
-    note = table.attrs.get("source_note", "")
-    if note:
-        fig.suptitle(note, fontsize=8)
-
-
 def _plot_profile(stats: pd.DataFrame, feature: str, band: int, outdir: Path, plt, artifacts: list) -> None:
     x = stats["hours_before_aligned_flare"].to_numpy()
     fig, ax = plt.subplots(figsize=(9, 5))
-    # Retain the legacy pointwise test, explicitly distinguish it from FDR.
-    ax.fill_between(x, 0, 1, where=stats["raw_p_lt_0_05"].to_numpy(),
-                    transform=ax.get_xaxis_transform(), color="0.90", zorder=0,
-                    label="Raw Welch p < 0.05 (pointwise)")
-    for group, color, label in (("sep", "#d94b4b", "SEP >{} MeV".format(band)), ("nsep", "#60758a", "NSEP")):
+    for group, color, label in (("sep", "#d94b4b", "SEP"), ("nsep", "#60758a", "NSEP")):
         mean = stats[group + "_mean"].to_numpy()
         ci = stats[group + "_ci95_halfwidth"].to_numpy()
         ax.plot(x, mean, color=color, lw=1.7, label="{} (n={})".format(label, int(stats[group + "_n"].max())))
         ax.fill_between(x, mean-ci, mean+ci, color=color, alpha=0.22)
-    sig = stats["bh_q_lt_0_05"].to_numpy()
-    ax.plot(x[sig], np.full(sig.sum(), 0.025), "|", color="purple", transform=ax.get_xaxis_transform(), label="BH q < 0.05")
-    ax.set(xlim=(24, 0), xlabel="Hours before 5-minute aligned FlrOnset", ylabel="{} ({})".format(DISPLAY_NAMES[feature], UNITS[feature]),
-           title="{}: mean ± 95% CI".format(DISPLAY_NAMES[feature]))
+    ax.set(xlim=(24, 0), xlabel="Hours before flare onset", ylabel="{} ({})".format(FEATURE_LABELS[feature], UNITS[feature]),
+           title="{}: >{} MeV cohort".format(DISPLAY_NAMES[feature], band))
     ax.grid(alpha=0.25)
     ax.legend(fontsize=8, frameon=False, loc="best")
-    fig.text(0.5, 0.005, "Pointwise CIs; BH correction across 288 tests within this feature and energy band.", ha="center", fontsize=8)
-    _source_note(fig, stats)
     _save(fig, outdir / "curves_{}_gt{}".format(DISPLAY_NAMES[feature], band), plt, artifacts)
 
 
@@ -224,13 +219,12 @@ def _plot_examples(frame: pd.DataFrame, values: np.ndarray, sep_mask: np.ndarray
             continue
         row = int(extended[0] if len(extended) else candidates[0])
         ax.plot(x, values[row], color=color, lw=1.4)
-        ax.set(ylabel="{} ({})".format(DISPLAY_NAMES[feature], UNITS[feature]), title="{}: FlrOnset {} (dataset row {})".format(name, frame.iloc[row]["FlrOnset"], row))
+        ax.set(ylabel="{} ({})".format(FEATURE_LABELS[feature], UNITS[feature]), title="{}: {}".format(name, frame.iloc[row]["FlrOnset"]))
         ax.grid(alpha=0.25)
         rows.append({"feature": feature, "energy_mev": band, "class": name, "dataset_row_index": row,
                      "FlrOnset": frame.iloc[row]["FlrOnset"], "selection": "first complete post-2013 row, or first complete baseline row if unavailable"})
-    axes[-1].set(xlim=(24, 0), xlabel="Hours before 5-minute aligned FlrOnset")
+    axes[-1].set(xlim=(24, 0), xlabel="Hours before flare onset")
     pd.DataFrame(rows).to_csv(outdir / (DISPLAY_NAMES[feature] + "_example_windows.csv"), index=False)
-    _source_note(fig, frame)
     _save(fig, outdir / "{}_sample24h_gt{}_MeV".format(DISPLAY_NAMES[feature], band), plt, artifacts)
 
 
@@ -258,9 +252,8 @@ def _plot_pca(pca: dict, labels: np.ndarray, metadata: pd.DataFrame, feature: st
     ax.bar(np.arange(1, len(variance)+1), variance, color="#53848e", label="Individual")
     ax.plot(np.arange(1, len(variance)+1), np.cumsum(variance), "o-", color="#b36b28", label="Cumulative")
     ax.set(xlabel="Principal component", ylabel="Explained variance ratio", ylim=(0, 1.03),
-           title="{}: full 288-point PCA, >{} MeV selection".format(name, band))
+           title="{}: PCA variance, >{} MeV".format(name, band))
     ax.legend(frameon=False)
-    _source_note(fig, metadata)
     _save(fig, outdir / (name + "_pca_scree"), plt, artifacts)
     if len(variance) >= 2:
         fig, ax = plt.subplots(figsize=(7, 5))
@@ -269,15 +262,13 @@ def _plot_pca(pca: dict, labels: np.ndarray, metadata: pd.DataFrame, feature: st
             ax.scatter(pca["scores"][select, 0], pca["scores"][select, 1], s=13, alpha=0.6,
                        c=color, linewidths=0, rasterized=True, label="{} (n={})".format(title, int(select.sum())))
         ax.set(xlabel="PC1 ({:.2%})".format(variance[0]), ylabel="PC2 ({:.2%})".format(variance[1]),
-               title="{}: PCA of complete time series".format(name))
+               title="{}: PCA, >{} MeV".format(name, band))
         ax.legend(frameon=False)
-        _source_note(fig, metadata)
         _save(fig, outdir / (name + "_pca_scatter_pc1_pc2"), plt, artifacts)
     fig, ax = plt.subplots(figsize=(10, 4.5))
     im = ax.imshow(pca["components"], aspect="auto", cmap="coolwarm", extent=[24, 0, len(variance)+0.5, 0.5])
-    ax.set(xlabel="Hours before aligned FlrOnset", ylabel="Principal component", title=name + ": PCA component weights")
-    fig.colorbar(im, ax=ax, label="Component weight (eigenvector coefficient)")
-    _source_note(fig, metadata)
+    ax.set(xlabel="Hours before flare onset", ylabel="Principal component", title=name + ": PCA component weights")
+    fig.colorbar(im, ax=ax, label="Component weight")
     _save(fig, outdir / (name + "_pca_loadings_heatmap"), plt, artifacts)
 
 
@@ -289,17 +280,10 @@ def _plot_difference_heatmap(effect_tables: Dict[str, pd.DataFrame], band: int, 
     normalized = np.divide(d-mean, std, out=np.zeros_like(d), where=std > 0)
     fig, ax = plt.subplots(figsize=(12, 5))
     im = ax.imshow(normalized, aspect="auto", origin="lower", cmap="coolwarm", extent=[24, 0, 0, len(names)], vmin=-2.5, vmax=2.5)
-    x = np.arange(STEPS, 0, -1) * STEP_MINUTES / 60.0
-    for i, name in enumerate(names):
-        raw = effect_tables[name]["raw_p_lt_0_05"].to_numpy()
-        corrected = effect_tables[name]["bh_q_lt_0_05"].to_numpy()
-        ax.scatter(x[raw], np.full(raw.sum(), i+0.40), marker="|", s=14, color="black")
-        ax.scatter(x[corrected], np.full(corrected.sum(), i+0.65), marker="|", s=14, color="purple")
     ax.set(yticks=np.arange(len(names))+0.5, yticklabels=[DISPLAY_NAMES[n] for n in names],
-           xlabel="Hours before aligned FlrOnset",
-           title="SEP >{} MeV − NSEP: mean differences normalized across time".format(band))
-    fig.colorbar(im, ax=ax, label="Within-row z score of mean difference (not Cohen's d)")
-    fig.text(0.5, 0.005, "Black: raw Welch p < 0.05; purple: BH q < 0.05 within each feature and band.", ha="center", fontsize=8)
+           xlabel="Hours before flare onset",
+           title="SEP − NSEP mean profiles: >{} MeV".format(band))
+    fig.colorbar(im, ax=ax, label="Mean difference (within-feature z score)")
     # Historical filename retained for comparison with the original project.
     _save(fig, outdir / "effectsize_heatmap_rownorm_gt{}".format(band), plt, artifacts)
 
@@ -315,7 +299,7 @@ def _plot_counts(frame: pd.DataFrame, outdir: Path, plt, artifacts: list) -> Non
     counts.to_csv(outdir / "label_counts_by_year.csv")
     fig, ax = plt.subplots(figsize=(13, 4.5))
     counts.plot.bar(stacked=True, ax=ax, color=["#7c8d9f", "#d94b4b"], width=0.8)
-    ax.set(xlabel="FlrOnset year", ylabel="Flare samples", title="SEP and NSEP flare samples by year")
+    ax.set(xlabel="Flare year", ylabel="Flare samples", title="SEP and NSEP samples by year")
     ax.legend(title=None, frameon=False)
     _save(fig, outdir / "label_counts_by_year", plt, artifacts)
 
@@ -440,20 +424,21 @@ def _run_tsne(values: np.ndarray, labels: np.ndarray, metadata: pd.DataFrame, fe
     for label, color, title in ((0, "#7c8d9f", "NSEP"), (1, "#d94b4b", "SEP")):
         mask = labels[valid] == label
         ax.scatter(embedding[mask, 0], embedding[mask, 1], s=12, alpha=0.65, c=color, linewidths=0, label="{} n={}".format(title, int(mask.sum())), rasterized=True)
-    ax.set(xlabel="t-SNE 1", ylabel="t-SNE 2", title="{}: descriptive t-SNE >{} MeV{}".format(DISPLAY_NAMES[feature], band, " (display subset)" if len(valid) < len(values) else ""))
+    ax.set(xlabel="t-SNE 1", ylabel="t-SNE 2", title="{}: t-SNE, >{} MeV{}".format(DISPLAY_NAMES[feature], band, " (subset)" if len(valid) < len(values) else ""))
     ax.legend(frameon=False)
     _save(fig, outdir / (DISPLAY_NAMES[feature] + "_tsne_2d"), plt, artifacts)
     return {"status": "complete", "plotted_samples": len(valid), "input_samples": len(values), "random_state": random_state,
             "perplexity": kwargs["perplexity"], "pre_pca_components": pca["scores"].shape[1]}
 
 
-def run_compatible_figures(dataset_dir, outdir, bands: Sequence[int] = (10, 30, 60, 100),
+def run_compatible_figures(dataset_dir, outdir, bands: Sequence[int] = (5, 10, 30, 60, 100),
                            features: Sequence[str] = FEATURES, tsne: bool = False,
                            tsne_max_samples: int = 3000, random_state: int = 42) -> dict:
     """Write PNG/PDF figures and audit tables for all ten extended files.
 
     Original energy cuts: >10 MeV peak >=10 pfu; >30, >60 and >100 MeV peak
-    >=5 pfu. The > sign refers to the energy channel, not the peak threshold.
+    >=5 pfu. The added >5 MeV group uses sep_peak_1 >=5 pfu. The > sign refers
+    to the energy channel, not the peak threshold.
     CIs and Welch tests reproduce the notebook. FDR is additional and explicit.
     All PCA models are descriptive fits to the chosen SEP and NSEP rows jointly.
     t-SNE is opt-in because it is slow and not a validation of forecast skill.
@@ -461,8 +446,8 @@ def run_compatible_figures(dataset_dir, outdir, bands: Sequence[int] = (10, 30, 
     dataset_dir, outdir = Path(dataset_dir), Path(outdir)
     bands, features = tuple(int(b) for b in bands), tuple(features)
     if not bands or len(set(bands)) != len(bands) or any(b not in BAND_SELECTION for b in bands):
-        raise ValueError("Choose distinct bands from 10, 30, 60 and 100")
-    if not features or len(set(features)) != len(features) or any(f not in FEATURES + EXTRA_FEATURES for f in features):
+        raise ValueError("Choose distinct bands from 5, 10, 30, 60 and 100")
+    if not features or len(set(features)) != len(features) or any(f not in FEATURES for f in features):
         raise ValueError("Unknown, empty or duplicate feature selection")
     if tsne_max_samples and tsne_max_samples < 4:
         raise ValueError("tsne_max_samples must be zero (all samples) or at least four")
@@ -480,6 +465,8 @@ def run_compatible_figures(dataset_dir, outdir, bands: Sequence[int] = (10, 30, 
         "alignment": "FlrOnset ceil to 5 minutes; bins from -24h to -5min relative to aligned onset",
         "time_axis_note": "Legacy displayed linspace(24,0,288) is retained in statistics only; last physical bin is -5 min.",
         "band_selection": {str(b): {"peak_column": BAND_SELECTION[b][0], "minimum_peak_pfu": BAND_SELECTION[b][1]} for b in bands},
+        "band_selection_note": "The >5 MeV group is an additional display cohort with sep_peak_1 >=5 pfu; the four original peak cuts are unchanged.",
+        "figure_presentation": "Mean profiles show shaded pointwise 95% confidence intervals; statistical tests and source notes are retained in audit tables rather than drawn on figures.",
         "control_selection": "all event_type==0 flare rows, as in the original workflow",
         "statistics": {"ci": "normal 1.959963984540054*SEM, pointwise", "test": "two-sided Welch t test per time column",
                        "fdr": "Benjamini-Hochberg independently within 288 tests per feature and band",
@@ -608,16 +595,16 @@ def run_compatible_figures(dataset_dir, outdir, bands: Sequence[int] = (10, 30, 
         fig, ax = plt.subplots(figsize=(14, 5))
         im = ax.imshow(matrix.to_numpy(), aspect="auto", vmin=0, vmax=1, cmap="YlGnBu")
         ax.set(yticks=np.arange(len(matrix)), yticklabels=matrix.index, xticks=np.arange(len(matrix.columns)),
-               xticklabels=matrix.columns.astype(str), xlabel="FlrOnset year", title="Saved feature availability by year (after filling)")
+               xticklabels=matrix.columns.astype(str), xlabel="Flare year", title="Feature availability by year")
         ax.tick_params(axis="x", rotation=90)
-        fig.colorbar(im, ax=ax, label="Fraction available in filled time-series cells")
+        fig.colorbar(im, ax=ax, label="Fraction of time-series values available")
         _save(fig, outdir / "feature_availability_by_year", plt, artifacts)
     fig, ax = plt.subplots(figsize=(10, 5))
     if len(counts):
         first = counts[counts["feature"].eq(features[0])].set_index("energy_mev")[["SEP", "NSEP"]]
         first.plot.bar(ax=ax, color=["#d94b4b", "#7c8d9f"])
         ax.set_yscale("symlog", linthresh=10)
-        ax.set(xlabel="Integral proton energy threshold (MeV)", ylabel="Flare sample count (symlog scale)", title="Original energy-band sample selection")
+        ax.set(xlabel="Integral proton energy threshold (MeV)", ylabel="Flare samples (symmetric log scale)", title="Sample counts by energy threshold")
     _save(fig, outdir / "sample_counts_by_energy", plt, artifacts)
     manifest["quality"] = _quality_report(dataset_dir, quality_rows, outdir, plt, artifacts)
     if not manifest["quality"]["prefill_quality_available"]:
