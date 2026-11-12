@@ -1,0 +1,430 @@
+{
+  "applicability": {
+    "allow_extrapolation": false,
+    "allowed_energy_bases": [
+      "geometric_mean_of_native_L2_band_bounds_effective_field_unused",
+      "native_L2_DiffProtonEffectiveEnergy"
+    ],
+    "energy_grid_rtol": 0.005,
+    "numeric_energy_grid_required": true,
+    "source_key": {
+      "energy_coordinate_basis": "geometric_mean_of_native_L2_band_bounds_effective_field_unused",
+      "source_detector": "SGPS-X physical west",
+      "source_product": "NOAA_SGPS_L2_AVG5M",
+      "source_satellite": "GOES-16"
+    }
+  },
+  "calibration_id": "18bc5fea86988cda6d6dca8f8ef162e5802524f4803d4c6b6b7b62bf07a776a2",
+  "created_utc": "2026-11-12T04:09:04.940894+00:00",
+  "failure_reasons": [],
+  "heldout_period": [
+    "2017-09-10 00:00:00+00:00",
+    "2017-09-30 23:55:00+00:00"
+  ],
+  "limitations": [
+    "Estimated legacy-instrument-equivalent values, not native EPEAD measurements",
+    "Validation is limited to the stated simultaneous products, source key, energy grid and tested spectral envelope",
+    "Quiet background matching does not establish calibrated physical interplanetary proton flux",
+    "A source bridge inherits reference-model errors; held-out agreement is not independent legacy validation",
+    "Interpolation, later gap filling and future classifier scores do not establish instrument calibration"
+  ],
+  "lineage": [],
+  "method": "Nonnegative response from native channels at/above the legacy nominal lower band energy plus nonnegative intercept; four relative-Huber NNLS fits; no population mean matching",
+  "models": {
+    "P4": {
+      "active_channels": [
+        5,
+        6,
+        10
+      ],
+      "coefficients": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.3959955264890513,
+        0.6385352352422907,
+        0.0,
+        0.0,
+        0.0,
+        0.0004056098782492111,
+        0.0,
+        0.0
+      ],
+      "failure_reasons": [],
+      "feature_scales": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        6.651858799159527,
+        0.29882154194638133,
+        0.020560590201057494,
+        0.0022522522158396896,
+        0.001468638402002398,
+        0.0011387163567633252,
+        0.0004922133030049736,
+        0.00034858925346270553
+      ],
+      "input_upper_bounds": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        48.87264594435692,
+        16.594592481851578,
+        4.935590550303459,
+        1.7485774587839842,
+        1.090683857910335,
+        0.6056936108507216,
+        0.11129512131446972,
+        0.011793634257628582
+      ],
+      "intercept": 0.013511163194701371,
+      "minimum_response_energy_MeV": 15.0,
+      "passed": true,
+      "required_channels": [
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12
+      ],
+      "training_pairs": 2591,
+      "training_relative_error_floor": 0.01577,
+      "training_requested_rows": 2592,
+      "validation": {
+        "event": {
+          "absolute_error_p95": 4.322817034791453,
+          "coverage": 0.9990079365079365,
+          "median_absolute_relative_error": 0.07574655800337232,
+          "median_relative_bias": 0.039052352910216026,
+          "observed_median": 1.48365,
+          "predicted_median": 1.4837903384572262,
+          "r2": 0.9724710378114229,
+          "requested_rows": 2016,
+          "valid_pairs": 2014
+        },
+        "quiet": {
+          "absolute_error_p95": 0.008987823020979889,
+          "coverage": 0.9952651515151515,
+          "median_absolute_relative_error": 0.15942770079287227,
+          "median_relative_bias": 0.020622499931868488,
+          "observed_median": 0.019055,
+          "predicted_median": 0.019068377827662946,
+          "r2": 0.0003205580781150408,
+          "requested_rows": 3168,
+          "valid_pairs": 3153
+        }
+      }
+    },
+    "P5": {
+      "active_channels": [
+        7,
+        9,
+        10,
+        11,
+        12
+      ],
+      "coefficients": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.02752906105620548,
+        0.0,
+        0.00023476563967063613,
+        0.0003342491447658963,
+        0.0011560706595961274,
+        0.0009517642202337926
+      ],
+      "failure_reasons": [],
+      "feature_scales": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        0.020560590201057494,
+        0.0022522522158396896,
+        0.001468638402002398,
+        0.0011387163567633252,
+        0.0004922133030049736,
+        0.00034858925346270553
+      ],
+      "input_upper_bounds": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        4.935590550303459,
+        1.7485774587839842,
+        1.090683857910335,
+        0.6056936108507216,
+        0.11129512131446972,
+        0.011793634257628582
+      ],
+      "intercept": 0.012943284474286084,
+      "minimum_response_energy_MeV": 40.0,
+      "passed": true,
+      "required_channels": [
+        7,
+        8,
+        9,
+        10,
+        11,
+        12
+      ],
+      "training_pairs": 2591,
+      "training_relative_error_floor": 0.013965,
+      "training_requested_rows": 2592,
+      "validation": {
+        "event": {
+          "absolute_error_p95": 0.4123457904757117,
+          "coverage": 0.9990079365079365,
+          "median_absolute_relative_error": 0.053671872330511405,
+          "median_relative_bias": 0.01652455726450075,
+          "observed_median": 0.1101,
+          "predicted_median": 0.10953547006375125,
+          "r2": 0.9854788222998162,
+          "requested_rows": 2016,
+          "valid_pairs": 2014
+        },
+        "quiet": {
+          "absolute_error_p95": 0.003936206359188433,
+          "coverage": 0.9952651515151515,
+          "median_absolute_relative_error": 0.087482192047045,
+          "median_relative_bias": 0.023907284352086,
+          "observed_median": 0.015342,
+          "predicted_median": 0.01567266371299328,
+          "r2": -0.07208123063728866,
+          "requested_rows": 3168,
+          "valid_pairs": 3153
+        }
+      }
+    },
+    "P6": {
+      "active_channels": [
+        8,
+        9,
+        10,
+        11,
+        12
+      ],
+      "coefficients": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        9.356010773297844e-05,
+        0.0003333214845631055,
+        0.0001832759008396994,
+        0.0004963641172138078,
+        0.00025697988219856307
+      ],
+      "failure_reasons": [],
+      "feature_scales": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        0.0022522522158396896,
+        0.001468638402002398,
+        0.0011387163567633252,
+        0.0004922133030049736,
+        0.00034858925346270553
+      ],
+      "input_upper_bounds": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.7485774587839842,
+        1.090683857910335,
+        0.6056936108507216,
+        0.11129512131446972,
+        0.011793634257628582
+      ],
+      "intercept": 0.0039462690844245625,
+      "minimum_response_energy_MeV": 80.0,
+      "passed": true,
+      "required_channels": [
+        8,
+        9,
+        10,
+        11,
+        12
+      ],
+      "training_pairs": 2591,
+      "training_relative_error_floor": 0.0041667,
+      "training_requested_rows": 2592,
+      "validation": {
+        "event": {
+          "absolute_error_p95": 0.07241361300913854,
+          "coverage": 0.9990079365079365,
+          "median_absolute_relative_error": 0.09743861078369365,
+          "median_relative_bias": -0.07217328377757493,
+          "observed_median": 0.0067751,
+          "predicted_median": 0.006503454609650653,
+          "r2": 0.9559157013427433,
+          "requested_rows": 2016,
+          "valid_pairs": 2014
+        },
+        "quiet": {
+          "absolute_error_p95": 0.0009009774845899667,
+          "coverage": 0.9952651515151515,
+          "median_absolute_relative_error": 0.06656893492803162,
+          "median_relative_bias": 0.005421337778626079,
+          "observed_median": 0.0046409,
+          "predicted_median": 0.004660663494958545,
+          "r2": -0.09266084522980944,
+          "requested_rows": 3168,
+          "valid_pairs": 3153
+        }
+      }
+    }
+  },
+  "provenance": {
+    "calibration_dates": [
+      "2017-09-01",
+      "2017-09-02",
+      "2017-09-03",
+      "2017-09-04",
+      "2017-09-05",
+      "2017-09-06",
+      "2017-09-07",
+      "2017-09-08",
+      "2017-09-09",
+      "2017-09-10",
+      "2017-09-11",
+      "2017-09-12",
+      "2017-09-13",
+      "2017-09-14",
+      "2017-09-15",
+      "2017-09-16",
+      "2017-09-17",
+      "2017-09-18",
+      "2017-09-19",
+      "2017-09-20",
+      "2017-09-21",
+      "2017-09-22",
+      "2017-09-23",
+      "2017-09-24",
+      "2017-09-25",
+      "2017-09-26",
+      "2017-09-27",
+      "2017-09-28",
+      "2017-09-29",
+      "2017-09-30"
+    ],
+    "heldout_definition": "Event September 10\u201316; quiet September 20\u201330, 2017",
+    "legacy_csv_sha256": "9e6f46d4cdd7d6a754d575c80af70f32476df06d93c21aa1551c826c181abc07",
+    "legacy_url": "https://www.ncei.noaa.gov/data/goes-space-environment-monitor/access/avg/2017/09/goes15/csv/g15_epead_p17ew_5m_20170901_20170930.csv",
+    "native_netcdf_sha256": "f5da29fe3a7dc3092a311a191ee015d6cb97773c6425e64214db2d0dab5fafb2",
+    "native_reader_details": {
+      "energy_coordinate_basis": "geometric_mean_of_native_L2_band_bounds_effective_field_unused",
+      "level": "L2",
+      "native_effective_energy_MeV": [
+        [
+          1.3773888339898797,
+          2.090454496036687,
+          2.777660886429443,
+          4.693825731745907,
+          8.01498596380555,
+          16.457909952360293,
+          30.800811677616547,
+          54.387682429020636,
+          90.79895373846551,
+          108.57347742427706,
+          128.2380598730346,
+          196.7739820199815,
+          333.92214661504556
+        ],
+        [
+          1.3773888339898797,
+          2.090454496036687,
+          2.777660886429443,
+          4.693825731745907,
+          8.01498596380555,
+          16.457909952360293,
+          31.822790575309387,
+          55.3277507223997,
+          90.95834211329932,
+          108.00185183597549,
+          129.89226304903613,
+          196.7739820199815,
+          333.92214661504556
+        ]
+      ],
+      "native_flux_units": "protons/(cm^2 sr keV s)",
+      "processing": "native 5-minute temperature-corrected AvgDiffProtonFlux; no temporal imputation",
+      "satellite": "GOES-16",
+      "yaw_policy": "legacy aggregate yaw: zero proves upright/-X west; nonzero rejected as ambiguous"
+    },
+    "response_input_policy": "Native centres at or above nominal lower energy: P4 15, P5 40, P6 80 MeV; unavailable irrelevant lower-energy channels cannot invalidate a high-energy observation.",
+    "sgps_url": "https://www.ngdc.noaa.gov/stp/space-weather/satellite-data/satellite-systems/goesr/solar_proton_events/sgps_sep2017_event_data/se_sgps-l2-avg5m_g16_s20172440000000_e20172732355000_v2_0_0.nc",
+    "training_definition": "September 1\u20139, 2017, simultaneous native SGPS and GOES15 W_UNCOR"
+  },
+  "reference_grid_MeV": [
+    1.3773888339898797,
+    2.090454496036687,
+    2.777660886429443,
+    4.693825731745907,
+    8.01498596380555,
+    16.457909952360293,
+    30.800811677616547,
+    54.387682429020636,
+    90.79895373846551,
+    108.57347742427706,
+    128.2380598730346,
+    196.7739820199815,
+    333.92214661504556
+  ],
+  "reference_kind": "observed_legacy",
+  "reference_quantity": "GOES-15 EPEAD W-labelled UNCOR differential channel-equivalent estimate",
+  "schema": "sep-proton-response-calibration-v1",
+  "status": "passed",
+  "training_fingerprint": "150a05bfa14321b78e3723a7329ca6a1beb89c250d0ddfbcbe5cbc1b98d9c0ce",
+  "training_period": [
+    "2017-09-01 00:00:00+00:00",
+    "2017-09-09 23:55:00+00:00"
+  ],
+  "units": "protons/(cm^2 s sr MeV)",
+  "validation_gates": {
+    "maximum_event_median_absolute_relative_error": 0.35,
+    "maximum_event_median_relative_bias": 0.3,
+    "maximum_quiet_median_absolute_relative_error": 0.35,
+    "maximum_quiet_median_relative_bias": 0.2,
+    "minimum_event_r2": 0.8,
+    "minimum_training_pairs": 200,
+    "minimum_validation_coverage": 0.95,
+    "minimum_validation_pairs_per_regime": 100
+  },
+  "validation_target_note": "Held-out targets are simultaneous native legacy W-labelled UNCOR observations"
+}

@@ -51,36 +51,36 @@ def test_later_t_obs_and_integration_guard_control_availability():
 def test_backward_holds_never_interpolate_toward_future_records(tmp_path, monkeypatch):
     rows = [record(flux=1e22), record("2025-01-01T23:12:00Z", flux=9e22)]
     store, calls = store_with_rows(tmp_path, monkeypatch, rows)
-    values, q = store.window("USFLUXL", "2025-01-02T00:00Z", 13950)
+    values, q = store.window("USFLUXL", "2025-01-02T00:00:00Z", 13950)
     assert len(values) == len(q) == 288
-    assert values.index[0] == pd.Timestamp("2025-01-01T00:00Z")
-    assert values.index[-1] == pd.Timestamp("2025-01-01T23:55Z")
-    assert pd.isna(values.loc["2025-01-01T23:10Z"])
-    assert values.loc["2025-01-01T23:15Z"] == 1e22
-    assert values.loc["2025-01-01T23:20Z"] == 1e22
-    assert values.loc["2025-01-01T23:25Z"] == 9e22
-    assert q.loc["2025-01-01T23:15Z", "point_status"] == "O"
-    assert q.loc["2025-01-01T23:20Z", "point_status"] == "H"
-    assert pd.isna(values.loc["2025-01-01T23:40Z"])
+    assert values.index[0] == pd.Timestamp("2025-01-01T00:00:00Z")
+    assert values.index[-1] == pd.Timestamp("2025-01-01T23:55:00Z")
+    assert pd.isna(values.loc["2025-01-01T23:10:00Z"])
+    assert values.loc["2025-01-01T23:15:00Z"] == 1e22
+    assert values.loc["2025-01-01T23:20:00Z"] == 1e22
+    assert values.loc["2025-01-01T23:25:00Z"] == 9e22
+    assert q.loc["2025-01-01T23:15:00Z", "point_status"] == "O"
+    assert q.loc["2025-01-01T23:20:00Z", "point_status"] == "H"
+    assert pd.isna(values.loc["2025-01-01T23:40:00Z"])
     valid = values.notna()
     assert (q.loc[valid, "available_at"] <= values.index[valid]).all()
     assert (q.loc[valid, "native_observation_time"] <= values.index[valid]).all()
-    other, _ = store.window("R_VALUE", "2025-01-02T00:00Z", 13950)
-    assert other.loc["2025-01-01T23:15Z"] == 3.5
+    other, _ = store.window("R_VALUE", "2025-01-02T00:00:00Z", 13950)
+    assert other.loc["2025-01-01T23:15:00Z"] == 3.5
     assert len(calls) == 2  # December/January once, shared by both features
 
 
 @pytest.mark.parametrize("requested", [13951, 1395])
 def test_no_assignment_from_unrelated_or_substring_region(tmp_path, monkeypatch, requested):
     store, _ = store_with_rows(tmp_path, monkeypatch, [record()])
-    values, q = store.window("USFLUXL", "2025-01-02T00:00Z", requested)
+    values, q = store.window("USFLUXL", "2025-01-02T00:00:00Z", requested)
     assert values.isna().all()
     assert q.point_status.eq("G").all()
 
 
 def test_missing_region_never_triggers_unrelated_solar_disk_download(tmp_path, monkeypatch):
     store, calls = store_with_rows(tmp_path, monkeypatch, [record()])
-    values, q = store.window("R_VALUE", "2025-01-02T00:00Z", np.nan)
+    values, q = store.window("R_VALUE", "2025-01-02T00:00:00Z", np.nan)
     assert values.isna().all() and q.point_status.eq("M").all()
     assert not calls
 
@@ -88,34 +88,34 @@ def test_missing_region_never_triggers_unrelated_solar_disk_download(tmp_path, m
 def test_multiple_region_native_patch_is_not_presented_as_isolated_region(tmp_path, monkeypatch):
     rows = [record(members="13950,13951")]
     store, _ = store_with_rows(tmp_path / "strict", monkeypatch, rows)
-    values, q = store.window("R_VALUE", "2025-01-02T00:00Z", 13950)
-    assert pd.isna(values.loc["2025-01-01T23:15Z"])
-    assert q.loc["2025-01-01T23:15Z", "point_status"] == "A"
+    values, q = store.window("R_VALUE", "2025-01-02T00:00:00Z", 13950)
+    assert pd.isna(values.loc["2025-01-01T23:15:00Z"])
+    assert q.loc["2025-01-01T23:15:00Z", "point_status"] == "A"
     permissive, _ = store_with_rows(tmp_path / "flagged", monkeypatch, rows, allow_multi_region_patch=True)
-    values, q = permissive.window("R_VALUE", "2025-01-02T00:00Z", 13950)
-    assert values.loc["2025-01-01T23:15Z"] == 3.5
-    assert q.loc["2025-01-01T23:15Z", "region_count"] == 2
+    values, q = permissive.window("R_VALUE", "2025-01-02T00:00:00Z", 13950)
+    assert values.loc["2025-01-01T23:15:00Z"] == 3.5
+    assert q.loc["2025-01-01T23:15:00Z", "region_count"] == 2
 
 
 def test_conflicting_patches_for_one_region_are_ambiguous(tmp_path, monkeypatch):
     store, _ = store_with_rows(tmp_path, monkeypatch, [record(patch="10"), record(patch="11")])
-    values, q = store.window("USFLUXL", "2025-01-02T00:00Z", 13950)
-    assert pd.isna(values.loc["2025-01-01T23:15Z"])
-    assert q.loc["2025-01-01T23:15Z", "point_status"] == "A"
+    values, q = store.window("USFLUXL", "2025-01-02T00:00:00Z", 13950)
+    assert pd.isna(values.loc["2025-01-01T23:15:00Z"])
+    assert q.loc["2025-01-01T23:15:00Z", "point_status"] == "A"
 
 
 def test_rejected_latest_quality_does_not_silently_fall_back_to_older_good_row(tmp_path, monkeypatch):
     store, _ = store_with_rows(tmp_path, monkeypatch, [record(), record("2025-01-01T23:12:00Z", quality="0x00010000")])
-    values, q = store.window("R_VALUE", "2025-01-02T00:00Z", 13950)
-    assert values.loc["2025-01-01T23:15Z"] == 3.5
-    assert pd.isna(values.loc["2025-01-01T23:25Z"])
-    assert q.loc["2025-01-01T23:25Z", "point_status"] == "Q"
+    values, q = store.window("R_VALUE", "2025-01-02T00:00:00Z", 13950)
+    assert values.loc["2025-01-01T23:15:00Z"] == 3.5
+    assert pd.isna(values.loc["2025-01-01T23:25:00Z"])
+    assert q.loc["2025-01-01T23:25:00Z", "point_status"] == "Q"
 
 
 def test_zero_r_value_survives_window_selection(tmp_path, monkeypatch):
     store, _ = store_with_rows(tmp_path, monkeypatch, [record(rval=0)])
-    values, _ = store.window("R_VALUE", "2025-01-02T00:00Z", 13950)
-    assert values.loc["2025-01-01T23:15Z"] == 0
+    values, _ = store.window("R_VALUE", "2025-01-02T00:00:00Z", 13950)
+    assert values.loc["2025-01-01T23:15:00Z"] == 0
     assert "log10" in store.metadata("R_VALUE")["units"]
 
 
@@ -133,9 +133,9 @@ def test_offline_native_csv_uses_same_quality_and_causal_selection(tmp_path):
     rows["series"] = ms.SHARP.series
     rows.to_csv(path, index=False)
     store = ms.MagneticStore(tmp_path / "cache", native_csv=path, progress=None)
-    values, q = store.window("R_VALUE", "2025-01-02T00:00Z", 13950)
-    assert values.loc["2025-01-01T23:15Z"] == 0
-    assert q.loc["2025-01-01T23:15Z", "native_cadence_minutes"] == 12
+    values, q = store.window("R_VALUE", "2025-01-02T00:00:00Z", 13950)
+    assert values.loc["2025-01-01T23:15:00Z"] == 0
+    assert q.loc["2025-01-01T23:15:00Z", "native_cadence_minutes"] == 12
     assert any(r.get("source") == "offline_native_keyword_csv" for r in store.source_records)
 
 
@@ -179,7 +179,7 @@ def test_large_jsoc_queries_are_bounded_and_split_without_losing_native_records(
         return {"status": 0, "count": 1, "keywords": [{"name": k, "values": [v]} for k, v in row.items()]}
 
     monkeypatch.setattr(store, "_request", request)
-    frame = store._fetch(ms.SHARP, pd.Timestamp("2025-01-01T00:00Z"), pd.Timestamp("2025-01-15T00:00Z"))
+    frame = store._fetch(ms.SHARP, pd.Timestamp("2025-01-01T00:00:00Z"), pd.Timestamp("2025-01-15T00:00:00Z"))
     assert len(frame) == 4
     assert max(stop-start for start, stop in requested) <= pd.Timedelta(days=7)
     assert len(requested) == 6  # two failed weeks, four successful half-weeks
@@ -195,7 +195,7 @@ def test_failed_daily_jsoc_query_is_not_relabelled_as_empty_month(tmp_path, monk
 
     monkeypatch.setattr(store, "_request", request)
     with pytest.raises(ms.MagneticQueryError):
-        store._fetch(ms.SHARP, pd.Timestamp("2025-01-01T00:00Z"), pd.Timestamp("2025-01-02T00:00Z"))
+        store._fetch(ms.SHARP, pd.Timestamp("2025-01-01T00:00:00Z"), pd.Timestamp("2025-01-02T00:00:00Z"))
 
 
 def test_historical_four_digit_region_expands_only_with_native_confirmation(tmp_path, monkeypatch):
@@ -249,7 +249,7 @@ def test_empty_week_between_populated_weeks_preserves_only_real_native_records(t
         return {"status": 0, "count": 1, "keywords": [{"name": name, "values": [value]} for name, value in row.items()]}
 
     monkeypatch.setattr(store, "_request", request)
-    frame = store._fetch(ms.SMARP, pd.Timestamp("1998-01-01T00:00Z"), pd.Timestamp("1998-01-22T00:00Z"))
+    frame = store._fetch(ms.SMARP, pd.Timestamp("1998-01-01T00:00:00Z"), pd.Timestamp("1998-01-22T00:00:00Z"))
     assert len(requested) == 3
     assert frame.T_REC.tolist() == [requested[0][0], requested[2][0]]
     assert frame.USFLUXL.eq(1e22).all()
@@ -268,7 +268,7 @@ def test_empty_month_marks_both_features_missing_and_reuses_raw_cache(tmp_path, 
     monkeypatch.setattr(ms.requests, "get", get)
     store = ms.MagneticStore(tmp_path, progress=None)
     for feature in ms.FEATURES:
-        values, quality = store.window(feature, "1998-07-15T00:00Z", 8124)
+        values, quality = store.window(feature, "1998-07-15T00:00:00Z", 8124)
         assert len(values) == len(quality) == 288
         assert values.isna().all()
         assert quality.point_status.eq("G").all()
@@ -278,6 +278,6 @@ def test_empty_month_marks_both_features_missing_and_reuses_raw_cache(tmp_path, 
     first_request_count = len(requests)
     assert first_request_count > 1
     resumed = ms.MagneticStore(tmp_path, progress=None)
-    values, quality = resumed.window("USFLUXL", "1998-07-15T00:00Z", 8124)
+    values, quality = resumed.window("USFLUXL", "1998-07-15T00:00:00Z", 8124)
     assert values.isna().all() and quality.point_status.eq("G").all()
     assert len(requests) == first_request_count

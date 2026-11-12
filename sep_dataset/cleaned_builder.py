@@ -22,6 +22,7 @@ VERSION = "aligned-rowwise-clean-v1"
 WORKFLOW = "cleaned_twelve_feature_release"
 TEN_FEATURES = FEATURES[:10]
 TEN_WORKFLOW = "cleaned_ten_feature_release"
+REPAIRED_WORKFLOW = "repaired_ten_feature_release_v2"
 SOURCE_FILL_VALUES = {
     "F": 9999.99,
     "Vx": 99999.9,
@@ -45,7 +46,7 @@ def sanitize_values(values, feature):
     if feature in SOURCE_FILL_VALUES:
         fill = SOURCE_FILL_VALUES[feature]
         source_fill |= (data == fill) | (data == float(np.float32(fill)))
-    data[(data == MISSING) | ~np.isfinite(data) | source_fill] = np.nan
+    data[(data == MISSING) | (data == -99999) | ~np.isfinite(data) | source_fill] = np.nan
     return data, source_fill
 
 
@@ -440,21 +441,23 @@ def clean_dataset(dataset_dir="data/processed/enhanced_1998_2025", *, outdir="da
         raise
 
 
-def validate_cleaned_dataset(dataset_dir):
+def validate_cleaned_dataset(dataset_dir, *, allow_verifying=False):
     """Verify the gap-free cohort, metadata, provenance, values and audit files."""
     root = Path(dataset_dir)
     manifest_path = root / "dataset_manifest.json"
     if not manifest_path.is_file():
         raise ValueError(f"Cleaned dataset is incomplete in {root}; run or resume clean first")
     manifest = json.loads(manifest_path.read_text())
-    if manifest.get("workflow") not in (WORKFLOW, TEN_WORKFLOW):
+    if manifest.get("workflow") not in (WORKFLOW, TEN_WORKFLOW, REPAIRED_WORKFLOW):
         raise ValueError("Not a cleaned ten- or twelve-feature dataset manifest")
-    features = tuple(TEN_FEATURES) if manifest["workflow"] == TEN_WORKFLOW else tuple(FEATURES)
+    repaired = manifest["workflow"] == REPAIRED_WORKFLOW
+    features = tuple(TEN_FEATURES) if manifest["workflow"] in (TEN_WORKFLOW, REPAIRED_WORKFLOW) else tuple(FEATURES)
     if manifest.get("config", {}).get("features") != list(features):
         raise ValueError("Cleaned workflow/config feature selection disagrees")
     if manifest["config"] != json.loads((root / "build_config.json").read_text()):
         raise ValueError("Cleaned manifest/config mismatch")
-    if json.loads((root / "build_status.json").read_text()).get("state") != "complete":
+    build_state = json.loads((root / "build_status.json").read_text()).get("state")
+    if build_state != "complete" and not (allow_verifying and repaired and build_state == "verifying"):
         raise ValueError("Cleaned build is not complete; resume clean before analysis")
     if [entry["feature"] for entry in manifest["feature_files"]] != list(features):
         raise ValueError("Cleaned output requires exactly its selected features in their original order")
@@ -476,7 +479,10 @@ def validate_cleaned_dataset(dataset_dir):
     if not mapping.event_type.isin([0, 1]).all() or not exclusions.event_type.isin([0, 1]).all():
         raise ValueError("Invalid retained/excluded labels")
     empty_columns = [f"empty_{feature}" for feature in features]
-    if not set(empty_columns).issubset(exclusions) or (len(exclusions) and not exclusions[empty_columns].any(axis=1).all()):
+    allowed_reasons = exclusions[empty_columns].any(axis=1) if set(empty_columns).issubset(exclusions) else pd.Series(False, index=exclusions.index)
+    if repaired and "flare_identity_excluded" in exclusions:
+        allowed_reasons = allowed_reasons | exclusions.flare_identity_excluded.eq(True)
+    if not set(empty_columns).issubset(exclusions) or (len(exclusions) and not allowed_reasons.all()):
         raise ValueError("Excluded samples lack an entirely unavailable feature reason")
     original_indices = mapping.source_row_index.tolist() + exclusions.source_row_index.tolist()
     if sorted(original_indices) != list(range(manifest["source_total_rows"])):
@@ -543,6 +549,9 @@ def validate_cleaned_dataset(dataset_dir):
         raise ValueError("Cleaned labels differ from row mapping")
     if not metadata.FlrOnset.astype(str).reset_index(drop=True).equals(mapping.FlrOnset.astype(str).reset_index(drop=True)):
         raise ValueError("Cleaned flare onsets differ from row mapping")
+    if repaired:
+        from .repaired_builder import validate_repaired_audits
+        validate_repaired_audits(root, manifest, mapping, exclusions, metadata)
     return {"valid": True, "feature_files": len(features), "rows_per_file": rows,
             "source_rows": manifest["source_total_rows"], "excluded_rows": manifest["excluded_rows"],
             "status": manifest["status"]}

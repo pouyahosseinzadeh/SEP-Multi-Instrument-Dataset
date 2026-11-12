@@ -24,12 +24,13 @@ import numpy as np
 import pandas as pd
 
 from .utils import cache_key, ensure_dir, isoformat_z, iter_month_starts, next_month, utc_timestamp
+from .flare_integrity import audit_flare_identities, assert_flare_label_integrity
 
 HEK_URL = "https://www.lmsal.com/hek/her"
 METHOD_URL = "https://arxiv.org/pdf/2310.15390"
 INTEGRAL_COLUMNS = ("GT5", "GT10", "GT30", "GT60", "GT100")
 CADENCE = pd.Timedelta(minutes=5)
-ASSOCIATION_RULE = "preceding_6h_same_above5_episode_largest_goes_class_v1"
+ASSOCIATION_RULE = "preceding_6h_same_above5_episode_largest_goes_class_v2_identity_audited"
 
 
 def _date_bounds(start: object, end: object) -> tuple[pd.Timestamp, pd.Timestamp]:
@@ -328,6 +329,37 @@ def label_flare_events(
             unassigned.remove(member)
     audit.loc[audit.status.eq("negative"), "event_type"] = 0
 
+    # Distinct catalog records can describe the same physical flare with
+    # slightly different start timestamps. Do not export one record as SEP
+    # and another as NSEP. Include resolved boundary-halo flares in this check
+    # so a known positive just outside the requested dates cannot reappear as
+    # a negative alias inside them. Preserve the original classification in
+    # the audit; a conflicting identity is quarantined rather than relabelled.
+    audit["classification_status"] = audit["status"]
+    audit["classification_event_type"] = audit["event_type"]
+    audit["canonical_flare_id"] = ""
+    audit["flare_identity_exclusion_reason"] = ""
+    audit["physical_flare_group_size"] = 0
+    resolved = np.flatnonzero(audit.event_type.notna().to_numpy())
+    if len(resolved):
+        resolved_metadata = work.iloc[resolved].copy()
+        resolved_metadata["event_type"] = audit.event_type.iloc[resolved].to_numpy(dtype=int)
+        identities = audit_flare_identities(resolved_metadata)
+        for item in identities["audit"].itertuples(index=False):
+            index = int(resolved[item.source_row_position])
+            audit.loc[index, "canonical_flare_id"] = item.canonical_flare_id
+            audit.loc[index, "physical_flare_group_size"] = item.group_size
+            audit.loc[index, "flare_identity_exclusion_reason"] = item.exclusion_reason
+            if not item.retained:
+                if item.exclusion_reason == "conflicting_sep_nsep_labels":
+                    status = "excluded_conflicting_physical_flare_labels"
+                elif item.exclusion_reason == "ambiguous_region_identity":
+                    status = "excluded_ambiguous_physical_flare_identity"
+                else:
+                    status = "excluded_duplicate_physical_flare"
+                audit.loc[index, "status"] = status
+                audit.loc[index, "event_type"] = np.nan
+
     labels = []
     for index, row in audit.iterrows():
         if not row["in_requested_range"]:
@@ -361,5 +393,6 @@ def label_flare_events(
     labels_df = pd.DataFrame(labels)
     if not labels_df.empty:
         labels_df = labels_df.sort_values("FlrOnset").reset_index(drop=True)
-    print(f"[INFO] Extension labels: {len(labels_df)} resolved flares; {audit.event_type.isna().sum()} excluded for unresolved observations", flush=True)
+        assert_flare_label_integrity(labels_df)
+    print(f"[INFO] Extension labels: {len(labels_df)} resolved unique flares; {audit.event_type.isna().sum()} excluded by observation or flare-identity checks", flush=True)
     return labels_df, audit

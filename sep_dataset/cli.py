@@ -1,4 +1,4 @@
-"""Build, validate and plot the twelve-feature research dataset."""
+"""Collect, repair, validate, plot and benchmark the SEP datasets."""
 from __future__ import annotations
 import argparse
 import json
@@ -8,7 +8,8 @@ LEGACY_DIR = "data/processed/compatible_1998_2025"
 ENHANCED_DIR = "data/processed/enhanced_1998_2025"
 CLEANED_DIR = "data/processed/cleaned_1998_2025"
 CLEANED_TEN_DIR = "data/processed/cleaned_ten_1998_2025"
-FIGURE_DIR = "reports/figures_paper_10features_1998_2025"
+REPAIRED_DIR = "data/processed/repaired_ten_1998_2025"
+FIGURE_DIR = "reports/figures_repaired_ten_1998_2025"
 PLOT_FEATURES = ("Vx", "flow_speed", "proton_density", "T", "F", "Xs", "Xl", "P4", "P5", "P6")
 
 
@@ -36,21 +37,52 @@ def build_parser() -> argparse.ArgumentParser:
     clean.add_argument("--dataset-dir", default=ENHANCED_DIR)
     clean.add_argument("--outdir", default=None, help=f"Default: {CLEANED_TEN_DIR} with --original-ten-only; otherwise {CLEANED_DIR}.")
     clean.add_argument("--original-ten-only", action="store_true", help="Recalculate the common cohort using only the original ten features in the existing enhanced archive; no downloads.")
+    repair = sub.add_parser("repair", help="Restore raw historical availability, enforce flare identity and apply validated source-scoped proton response estimates.")
+    repair.add_argument("--dataset-dir", default=ENHANCED_DIR)
+    repair.add_argument("--outdir", default=REPAIRED_DIR)
+    repair.add_argument("--calibration-bank", help="Validated calibration bank; defaults to the versioned bundled bank.")
+    repair.add_argument("--historical-masks", help="Checksummed original raw-availability bundle; defaults to the bundled original masks.")
     plot = sub.add_parser("plot", help="Original time-series/PCA figures plus new correlations, distributions and coverage diagnostics.")
-    plot.add_argument("--dataset-dir", default=CLEANED_DIR)
+    plot.add_argument("--dataset-dir", default=REPAIRED_DIR)
     plot.add_argument("--outdir", default=FIGURE_DIR)
     plot.add_argument("--bands", nargs="+", type=int, choices=[5, 10, 30, 60, 100], default=[5, 10, 30, 60, 100])
     plot.add_argument("--features", nargs="+", choices=PLOT_FEATURES, help="Original ten features only; all ten are plotted by default.")
     plot.add_argument("--tsne", action="store_true")
     plot.add_argument("--tsne-max-samples", type=int, default=3000)
     plot.add_argument("--original-figures-only", action="store_true")
+    plot.add_argument("--with-models", action="store_true", help="After figures, run RF and genuine Time Series Forest separately on all ten features.")
+    _model_arguments(plot)
     paper = sub.add_parser("paper-plot", help="Run only the new publication diagnostics, including correlations.")
-    paper.add_argument("--dataset-dir", default=CLEANED_DIR)
+    paper.add_argument("--dataset-dir", default=REPAIRED_DIR)
     paper.add_argument("--outdir", default=FIGURE_DIR + "/paper")
     paper.add_argument("--features", nargs="+", choices=PLOT_FEATURES, default=PLOT_FEATURES)
     valid = sub.add_parser("validate", help="Verify all files, exact sample alignment, checksums and per-point quality masks.")
-    valid.add_argument("--dataset-dir", default=CLEANED_DIR)
+    valid.add_argument("--dataset-dir", default=REPAIRED_DIR)
+    benchmark = sub.add_parser("benchmark", help="Run only leakage-controlled univariate RF/Time Series Forest evaluations and compact plots.")
+    benchmark.add_argument("--dataset-dir", default=REPAIRED_DIR)
+    benchmark.add_argument("--outdir", default=FIGURE_DIR+"/models")
+    _model_arguments(benchmark)
     return parser
+
+
+def _model_arguments(parser):
+    parser.add_argument("--train-end", default="2014-12-31")
+    parser.add_argument("--validation-end", default="2019-12-31")
+    parser.add_argument("--n-estimators", type=int, default=200)
+    parser.add_argument("--n-jobs", type=int, default=1)
+    parser.add_argument("--random-state", type=int, default=42)
+
+
+def _benchmark(args, outdir, validated=False):
+    from .benchmark import run_benchmarks
+    root = Path(args.dataset_dir)
+    if not validated:
+        completed = _completed_manifest(root, "benchmarking")
+        if completed.get("workflow") != "repaired_ten_feature_release_v2":
+            raise ValueError("Run 'repair' on the unfiltered enhanced archive before benchmarking.")
+        _validate_release(root, completed)
+    return run_benchmarks(root, outdir, train_end=args.train_end, validation_end=args.validation_end,
+                          n_estimators=args.n_estimators, n_jobs=args.n_jobs, random_state=args.random_state)
 
 
 def _clean(dataset_dir, outdir=CLEANED_DIR, features=None):
@@ -77,11 +109,14 @@ def _completed_manifest(root, action="plotting"):
         status_path = root / "build_status.json"
         state = json.loads(status_path.read_text()) if status_path.exists() else {}
         detail = state.get("error") or state.get("state", "not completed")
-        raise RuntimeError(f"Dataset build is incomplete in {root}: {detail}. Complete or resume the build before {action}. If the enhanced archive is complete, run 'python -m sep_dataset.cli clean'.")
+        raise RuntimeError(f"Dataset output is incomplete in {root}: {detail}. Complete or resume preparation before {action}. For the corrected ten-feature release from an existing enhanced archive, run 'python -m sep_dataset.cli repair' with the intended source and output folders.")
     return json.loads(path.read_text())
 
 
 def _validate_release(root, manifest):
+    if manifest.get("workflow") == "repaired_ten_feature_release_v2":
+        from .repaired_builder import validate_repaired_dataset
+        return validate_repaired_dataset(root)
     if manifest.get("workflow") in ("cleaned_twelve_feature_release", "cleaned_ten_feature_release"):
         from .cleaned_builder import validate_cleaned_dataset
         return validate_cleaned_dataset(root)
@@ -164,25 +199,44 @@ def main(argv: list[str] | None = None) -> None:
             _clean(args.dataset_dir, args.outdir or CLEANED_TEN_DIR, features=PLOT_FEATURES)
         else:
             _clean(args.dataset_dir, args.outdir or CLEANED_DIR)
+    elif args.command == "repair":
+        from .repaired_builder import repair_dataset
+        result = repair_dataset(args.dataset_dir, outdir=args.outdir,
+                                calibration_bank=args.calibration_bank, historical_masks=args.historical_masks)
+        print(json.dumps({"outdir": args.outdir, "workflow": result["workflow"],
+                          "rows_per_feature": result["total_rows_per_feature"],
+                          "excluded_rows": result["excluded_rows"]}, indent=2), flush=True)
     elif args.command == "plot":
         from .compatible_figures import run_compatible_figures
         root = Path(args.dataset_dir)
         completed = _completed_manifest(root)
         features = tuple(args.features) if args.features else PLOT_FEATURES
+        if args.with_models and features != PLOT_FEATURES:
+            raise ValueError("--with-models evaluates all ten original features; omit --features or use the original ten in order.")
+        if args.with_models and completed.get("workflow") != "repaired_ten_feature_release_v2":
+            raise ValueError("Run 'repair' on the unfiltered enhanced archive before benchmarking.")
+        if completed.get("workflow") == "repaired_ten_feature_release_v2":
+            _validate_release(root, completed)
         _validate_plot_inputs(root, completed, features)
         run_compatible_figures(root, args.outdir, bands=args.bands, features=features,
                                tsne=args.tsne, tsne_max_samples=args.tsne_max_samples)
         if not args.original_figures_only:
             from .paper_figures import run_paper_figures
             run_paper_figures(root, Path(args.outdir) / "paper", features=features)
+        if args.with_models:
+            _benchmark(args, Path(args.outdir)/"models", validated=True)
         print(f"[DONE] Figures and numerical tables: {args.outdir}", flush=True)
     elif args.command == "paper-plot":
         from .paper_figures import run_paper_figures
         root = Path(args.dataset_dir)
         completed = _completed_manifest(root)
         features = tuple(args.features)
+        if completed.get("workflow") == "repaired_ten_feature_release_v2":
+            _validate_release(root, completed)
         _validate_plot_inputs(root, completed, features)
         run_paper_figures(root, args.outdir, features=features)
+    elif args.command == "benchmark":
+        _benchmark(args, args.outdir)
     else:
         root = Path(args.dataset_dir)
         manifest = _completed_manifest(root, "validation")

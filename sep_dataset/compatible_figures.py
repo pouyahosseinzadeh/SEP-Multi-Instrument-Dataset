@@ -476,7 +476,7 @@ def run_compatible_figures(dataset_dir, outdir, bands: Sequence[int] = (5, 10, 3
     }
     dataset_manifest_path = dataset_dir / "dataset_manifest.json"
     dataset_manifest = json.loads(dataset_manifest_path.read_text()) if dataset_manifest_path.exists() else {}
-    cleaned = dataset_manifest.get("workflow") in ("cleaned_twelve_feature_release", "cleaned_ten_feature_release")
+    cleaned = dataset_manifest.get("workflow") in ("cleaned_twelve_feature_release", "cleaned_ten_feature_release", "repaired_ten_feature_release_v2")
     enhanced = cleaned or dataset_manifest.get("workflow") == "enhanced_twelve_feature_research_release"
     manifest["input_workflow"] = dataset_manifest.get("workflow", "original_or_external")
     if cleaned:
@@ -485,7 +485,9 @@ def run_compatible_figures(dataset_dir, outdir, bands: Sequence[int] = (5, 10, 3
         print("[FIGURES] {}: reading {}".format(feature, path.name), flush=True)
         frame, x = _read_feature(path, feature)
         note = ""
-        if enhanced and feature in ("P4", "P5", "P6"):
+        if dataset_manifest.get("workflow") == "repaired_ten_feature_release_v2" and feature in ("P4", "P5", "P6"):
+            note = "Legacy measurements and source-scoped, overlap-tested legacy-instrument-equivalent SGPS estimates; quality and calibration scope retained in release audits"
+        elif enhanced and feature in ("P4", "P5", "P6"):
             note = "Legacy measurements + flagged SGPS reference-energy estimates; detector responses differ"
         elif enhanced and feature in EXTRA_FEATURES:
             note = "Native MDI/HMI active-region patch values; five-minute grid includes bounded holds"

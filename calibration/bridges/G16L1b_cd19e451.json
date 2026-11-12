@@ -1,0 +1,588 @@
+{
+  "applicability": {
+    "allow_extrapolation": false,
+    "allowed_energy_bases": [
+      "geometric_mean_of_native_L1b_nominal_label_bounds"
+    ],
+    "energy_grid_rtol": 0.005,
+    "numeric_energy_grid_required": true,
+    "source_key": {
+      "energy_coordinate_basis": "geometric_mean_of_native_L1b_nominal_label_bounds",
+      "source_detector": "SGPS-X physical west",
+      "source_product": "NOAA_SGPS_L1B_VALID_1S_TO_5MIN",
+      "source_satellite": "GOES-16"
+    }
+  },
+  "calibration_id": "05b5b8d66c76602029fa987ffa6f296f248f3e2fb8dd28957dd85bfee953c3c8",
+  "created_utc": "2026-11-12T04:09:11.010405+00:00",
+  "failure_reasons": [],
+  "heldout_period": [
+    "2021-10-29 00:00:00+00:00",
+    "2024-10-10 23:55:00+00:00"
+  ],
+  "limitations": [
+    "Estimated legacy-instrument-equivalent values, not native EPEAD measurements",
+    "Validation is limited to the stated simultaneous products, source key, energy grid and tested spectral envelope",
+    "Quiet background matching does not establish calibrated physical interplanetary proton flux",
+    "A source bridge inherits reference-model errors; held-out agreement is not independent legacy validation",
+    "Interpolation, later gap filling and future classifier scores do not establish instrument calibration"
+  ],
+  "lineage": [
+    "18bc5fea86988cda6d6dca8f8ef162e5802524f4803d4c6b6b7b62bf07a776a2"
+  ],
+  "method": "Nonnegative response from native channels at/above the legacy nominal lower band energy plus nonnegative intercept; four relative-Huber NNLS fits; no population mean matching",
+  "models": {
+    "P4": {
+      "active_channels": [
+        5,
+        6,
+        10,
+        12
+      ],
+      "coefficients": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.46592556093879994,
+        1.700236354587485,
+        0.0,
+        0.0,
+        0.0,
+        0.0056013826834292214,
+        0.0,
+        0.00043122463671957357
+      ],
+      "failure_reasons": [],
+      "feature_scales": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        2.3803715201987266,
+        0.7305183961725562,
+        0.27446959467488363,
+        0.09309780176530089,
+        0.061962511003002874,
+        0.019571246458023474,
+        0.008085856814886942,
+        0.0015588612169873766
+      ],
+      "input_upper_bounds": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        48.78181437651316,
+        4.877676653365294,
+        0.5852544099616352,
+        0.1470599782987847,
+        0.100997344792025,
+        0.07726714422460645,
+        0.01964979450197764,
+        0.00410321395520441
+      ],
+      "intercept": 0.01381982659984377,
+      "minimum_response_energy_MeV": 15.0,
+      "passed": true,
+      "required_channels": [
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12
+      ],
+      "training_pairs": 1580,
+      "training_relative_error_floor": 0.016905455480161424,
+      "training_requested_rows": 1580,
+      "validation": {
+        "event": {
+          "absolute_error_p95": 0.32600471716768825,
+          "coverage": 1.0,
+          "median_absolute_relative_error": 0.05304259673004785,
+          "median_relative_bias": 0.03266340261409928,
+          "observed_median": 0.6269729309796774,
+          "predicted_median": 0.6324192312284007,
+          "r2": 0.9400422713275296,
+          "requested_rows": 695,
+          "valid_pairs": 695
+        },
+        "quiet": {
+          "absolute_error_p95": 0.034162044338784545,
+          "coverage": 1.0,
+          "median_absolute_relative_error": 0.04433791401945952,
+          "median_relative_bias": 0.030859030306537916,
+          "observed_median": 0.062211844700303054,
+          "predicted_median": 0.06302998902791494,
+          "r2": 0.6612896268295512,
+          "requested_rows": 286,
+          "valid_pairs": 286
+        }
+      }
+    },
+    "P5": {
+      "active_channels": [
+        7,
+        8,
+        9,
+        10,
+        11,
+        12
+      ],
+      "coefficients": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.3644927776511443,
+        0.0033512235261450784,
+        0.021331510237549086,
+        0.0001109356742780938,
+        0.019315290651100513,
+        0.004650842172861191
+      ],
+      "failure_reasons": [],
+      "feature_scales": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        0.27446959467488363,
+        0.09309780176530089,
+        0.061962511003002874,
+        0.019571246458023474,
+        0.008085856814886942,
+        0.0015588612169873766
+      ],
+      "input_upper_bounds": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.5852544099616352,
+        0.1470599782987847,
+        0.100997344792025,
+        0.07726714422460645,
+        0.01964979450197764,
+        0.00410321395520441
+      ],
+      "intercept": 0.012964524153564366,
+      "minimum_response_energy_MeV": 40.0,
+      "passed": true,
+      "required_channels": [
+        7,
+        8,
+        9,
+        10,
+        11,
+        12
+      ],
+      "training_pairs": 1580,
+      "training_relative_error_floor": 0.015345758445796366,
+      "training_requested_rows": 1580,
+      "validation": {
+        "event": {
+          "absolute_error_p95": 0.002298532192026108,
+          "coverage": 1.0,
+          "median_absolute_relative_error": 0.004114108940013295,
+          "median_relative_bias": 0.0008339066969735853,
+          "observed_median": 0.1150652756267105,
+          "predicted_median": 0.11493546386277441,
+          "r2": 0.9998863450351918,
+          "requested_rows": 695,
+          "valid_pairs": 695
+        },
+        "quiet": {
+          "absolute_error_p95": 0.00025081764701511463,
+          "coverage": 1.0,
+          "median_absolute_relative_error": 0.005850284707752729,
+          "median_relative_bias": 0.001809147530528965,
+          "observed_median": 0.016996325727963252,
+          "predicted_median": 0.01692646330085261,
+          "r2": 0.9873844803165681,
+          "requested_rows": 286,
+          "valid_pairs": 286
+        }
+      }
+    },
+    "P6": {
+      "active_channels": [
+        8,
+        9,
+        10,
+        11,
+        12
+      ],
+      "coefficients": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0035145209911330716,
+        0.019412099013754243,
+        0.00044402819961030925,
+        0.008880047670409123,
+        0.0011417181049701815
+      ],
+      "failure_reasons": [],
+      "feature_scales": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        0.09309780176530089,
+        0.061962511003002874,
+        0.019571246458023474,
+        0.008085856814886942,
+        0.0015588612169873766
+      ],
+      "input_upper_bounds": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.1470599782987847,
+        0.100997344792025,
+        0.07726714422460645,
+        0.01964979450197764,
+        0.00410321395520441
+      ],
+      "intercept": 0.003945015897446366,
+      "minimum_response_energy_MeV": 80.0,
+      "passed": true,
+      "required_channels": [
+        8,
+        9,
+        10,
+        11,
+        12
+      ],
+      "training_pairs": 1580,
+      "training_relative_error_floor": 0.0044109008741886726,
+      "training_requested_rows": 1580,
+      "validation": {
+        "event": {
+          "absolute_error_p95": 0.0007463957805843698,
+          "coverage": 1.0,
+          "median_absolute_relative_error": 0.016786303637271738,
+          "median_relative_bias": 0.007052497418559067,
+          "observed_median": 0.008546192657645092,
+          "predicted_median": 0.008453059412551495,
+          "r2": 0.9982679584223098,
+          "requested_rows": 695,
+          "valid_pairs": 695
+        },
+        "quiet": {
+          "absolute_error_p95": 9.647800479767711e-05,
+          "coverage": 1.0,
+          "median_absolute_relative_error": 0.008316670557412587,
+          "median_relative_bias": 0.0031195215045519697,
+          "observed_median": 0.0044094540862496465,
+          "predicted_median": 0.004416218696679221,
+          "r2": 0.7014427784730908,
+          "requested_rows": 286,
+          "valid_pairs": 286
+        }
+      }
+    }
+  },
+  "provenance": {
+    "bridge_plan": "G16L1b",
+    "calibration_dates": [
+      "2020-11-29",
+      "2021-10-28",
+      "2021-10-29",
+      "2021-11-02",
+      "2024-01-02",
+      "2024-05-11",
+      "2024-05-12",
+      "2024-09-14",
+      "2024-10-09",
+      "2024-10-10"
+    ],
+    "coverage_condition": "Bridge validation requested rows are fixed before fit as times with valid simultaneous parent-reference estimates; candidate missing predictions still count against the 95% requirement. Full-pool parent coverage is reported separately.",
+    "native_sources": [
+      {
+        "day": "2020-11-29",
+        "level": "L1b",
+        "satellite": 16,
+        "sha256": "5563e1062e09007c47b750cafc7cb7d9f37d6bd36f894520e76c6cab43c07799",
+        "url": "https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/goes/goes16/l1b/seis-l1b-sgps/2020/11/ops_seis-l1b-sgps_g16_d20201129_v0-0-0.nc"
+      },
+      {
+        "day": "2020-11-29",
+        "level": "L2",
+        "satellite": 16,
+        "sha256": "37d01b9e8969c2689b7e3b847cd46bd68d4914f0454aa9a5840a8860096a62c5",
+        "url": "https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/goes/goes16/l2/data/sgps-l2-avg5m/2020/11/sci_sgps-l2-avg5m_g16_d20201129_v1-0-1.nc"
+      },
+      {
+        "day": "2021-10-28",
+        "level": "L1b",
+        "satellite": 16,
+        "sha256": "546cd2571395b6f232b47ddba6bec69284d815e03a6d97cd8b14b84add38f687",
+        "url": "https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/goes/goes16/l1b/seis-l1b-sgps/2021/10/ops_seis-l1b-sgps_g16_d20211028_v0-0-0.nc"
+      },
+      {
+        "day": "2021-10-28",
+        "level": "L2",
+        "satellite": 16,
+        "sha256": "b631e5578235381e25d498a36b70f6cb1af48369e3b39acccda9301360d438bf",
+        "url": "https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/goes/goes16/l2/data/sgps-l2-avg5m/2021/10/sci_sgps-l2-avg5m_g16_d20211028_v2-0-0.nc"
+      },
+      {
+        "day": "2021-11-02",
+        "level": "L1b",
+        "satellite": 16,
+        "sha256": "4371b54c02326a1b9c3f16e68bd65e1ccfd15de541029a0806326cdcc041a14f",
+        "url": "https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/goes/goes16/l1b/seis-l1b-sgps/2021/11/ops_seis-l1b-sgps_g16_d20211102_v0-0-0.nc"
+      },
+      {
+        "day": "2021-11-02",
+        "level": "L2",
+        "satellite": 16,
+        "sha256": "59228241cafe8edcad84c89db8fc0312e8de21a052f4a3b636dcad583f58f34d",
+        "url": "https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/goes/goes16/l2/data/sgps-l2-avg5m/2021/11/sci_sgps-l2-avg5m_g16_d20211102_v2-0-0.nc"
+      },
+      {
+        "day": "2021-10-29",
+        "level": "L1b",
+        "satellite": 16,
+        "sha256": "85d90a85282c45c3c604331376cff895a3ab0f9f539fec2c63baacd1d3928862",
+        "url": "https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/goes/goes16/l1b/seis-l1b-sgps/2021/10/ops_seis-l1b-sgps_g16_d20211029_v0-0-0.nc"
+      },
+      {
+        "day": "2021-10-29",
+        "level": "L2",
+        "satellite": 16,
+        "sha256": "80819dc875c9a2135dfae7ba9a355d74022745715ccac56196c2daa6ea22c9e6",
+        "url": "https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/goes/goes16/l2/data/sgps-l2-avg5m/2021/10/sci_sgps-l2-avg5m_g16_d20211029_v2-0-0.nc"
+      },
+      {
+        "day": "2024-05-11",
+        "level": "L1b",
+        "satellite": 16,
+        "sha256": "2f77e1c6aebdb4d6757bcc6cb58af554dd6d873b7953f84cad9ad3a8b5318dd8",
+        "url": "https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/goes/goes16/l1b/seis-l1b-sgps/2024/05/ops_seis-l1b-sgps_g16_d20240511_v0-0-0.nc"
+      },
+      {
+        "day": "2024-05-11",
+        "level": "L2",
+        "satellite": 16,
+        "sha256": "c515d1218cd56eae62acd559f7d5a0e3a6cd57e7e5695d395c7f53cd8b2e4ea3",
+        "url": "https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/goes/goes16/l2/data/sgps-l2-avg5m/2024/05/sci_sgps-l2-avg5m_g16_d20240511_v3-0-2.nc"
+      },
+      {
+        "day": "2024-09-14",
+        "level": "L1b",
+        "satellite": 16,
+        "sha256": "dd4be9c826014358214846b37ef46ba2d068108b7781d9b5b75a158657f80618",
+        "url": "https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/goes/goes16/l1b/seis-l1b-sgps/2024/09/ops_seis-l1b-sgps_g16_d20240914_v0-0-0.nc"
+      },
+      {
+        "day": "2024-09-14",
+        "level": "L2",
+        "satellite": 16,
+        "sha256": "bb49b0524fb4e7d14dc32438c6f86fb1f9c555d2f61d30711d344a26dfb81665",
+        "url": "https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/goes/goes16/l2/data/sgps-l2-avg5m/2024/09/sci_sgps-l2-avg5m_g16_d20240914_v3-0-2.nc"
+      },
+      {
+        "day": "2024-10-09",
+        "level": "L1b",
+        "satellite": 16,
+        "sha256": "af0abb4021fb319f6c4bfafc4bcd13b0aa0f7925aefbb8bfbd58ebd2ddc84acb",
+        "url": "https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/goes/goes16/l1b/seis-l1b-sgps/2024/10/ops_seis-l1b-sgps_g16_d20241009_v0-0-0.nc"
+      },
+      {
+        "day": "2024-10-09",
+        "level": "L2",
+        "satellite": 16,
+        "sha256": "40c404249818937ede12f08aba968b32ec61bdd216969424d9b8165d5929af43",
+        "url": "https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/goes/goes16/l2/data/sgps-l2-avg5m/2024/10/sci_sgps-l2-avg5m_g16_d20241009_v3-0-2.nc"
+      },
+      {
+        "day": "2024-01-02",
+        "level": "L1b",
+        "satellite": 16,
+        "sha256": "1fe9848f72418385de2a6b26a28145c35bc54786ebf43030014d6bde73693266",
+        "url": "https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/goes/goes16/l1b/seis-l1b-sgps/2024/01/ops_seis-l1b-sgps_g16_d20240102_v0-0-0.nc"
+      },
+      {
+        "day": "2024-01-02",
+        "level": "L2",
+        "satellite": 16,
+        "sha256": "32cdbbb8ba0ddf6bb13cafb0c5e4ad841b44dcd7e7419d53671e0ad511c5f2e3",
+        "url": "https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/goes/goes16/l2/data/sgps-l2-avg5m/2024/01/sci_sgps-l2-avg5m_g16_d20240102_v3-0-2.nc"
+      },
+      {
+        "day": "2024-05-12",
+        "level": "L1b",
+        "satellite": 16,
+        "sha256": "5c05e7d3ccd0c3596db316e7fc5808f36f136b73cd25a0e1d1a97d00e1214c49",
+        "url": "https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/goes/goes16/l1b/seis-l1b-sgps/2024/05/ops_seis-l1b-sgps_g16_d20240512_v0-0-0.nc"
+      },
+      {
+        "day": "2024-05-12",
+        "level": "L2",
+        "satellite": 16,
+        "sha256": "4cc099256096389e009c87f9f1c24ae8538b5253f2c896cadea902e4cd8b84c8",
+        "url": "https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/goes/goes16/l2/data/sgps-l2-avg5m/2024/05/sci_sgps-l2-avg5m_g16_d20240512_v3-0-2.nc"
+      },
+      {
+        "day": "2024-10-10",
+        "level": "L1b",
+        "satellite": 16,
+        "sha256": "296306996510fa4d3ffeeacdd061a05e8e08705cbfd08f34edbadf9ef096e371",
+        "url": "https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/goes/goes16/l1b/seis-l1b-sgps/2024/10/ops_seis-l1b-sgps_g16_d20241010_v0-0-0.nc"
+      },
+      {
+        "day": "2024-10-10",
+        "level": "L2",
+        "satellite": 16,
+        "sha256": "a4555692d5095ad609c0ca44783332c4875b1ffc8cc0888212c74c7fa4a89d1f",
+        "url": "https://data.ngdc.noaa.gov/platforms/solar-space-observing-satellites/goes/goes16/l2/data/sgps-l2-avg5m/2024/10/sci_sgps-l2-avg5m_g16_d20241010_v3-0-2.nc"
+      }
+    ],
+    "planned_days": [
+      [
+        "2020-11-29",
+        "train",
+        "quiet"
+      ],
+      [
+        "2021-10-28",
+        "train",
+        "event"
+      ],
+      [
+        "2021-11-02",
+        "train",
+        "quiet"
+      ],
+      [
+        "2021-10-29",
+        "validation",
+        "event"
+      ],
+      [
+        "2021-11-01",
+        "validation",
+        "quiet"
+      ],
+      [
+        "2024-05-11",
+        "train",
+        "event"
+      ],
+      [
+        "2024-09-14",
+        "train",
+        "event"
+      ],
+      [
+        "2024-10-09",
+        "train",
+        "event"
+      ],
+      [
+        "2024-01-02",
+        "validation",
+        "quiet"
+      ],
+      [
+        "2024-05-12",
+        "validation",
+        "event"
+      ],
+      [
+        "2024-10-10",
+        "validation",
+        "event"
+      ]
+    ],
+    "scope_note": "This is an empirically validated bridge to modeled legacy-equivalent values, not direct validation against a live legacy instrument.",
+    "target_definition": "Same-time passed G16 L2 reference response estimates",
+    "unavailable_days": [
+      {
+        "day": "2021-11-01",
+        "reason": "Calibrate one source group at a time: source_detector",
+        "split": "validation"
+      }
+    ],
+    "upstream_reference_coverage": {
+      "event": {
+        "reference_coverage": 0.8043981481481481,
+        "reference_supported_rows": 695,
+        "requested_rows": 864
+      },
+      "quiet": {
+        "reference_coverage": 0.9930555555555556,
+        "reference_supported_rows": 286,
+        "requested_rows": 288
+      }
+    }
+  },
+  "reference_grid_MeV": [
+    1.378404875209022,
+    2.090454496036687,
+    2.7964262908219126,
+    4.701063709417263,
+    8.831760866327848,
+    17.320508075688775,
+    31.622776601683793,
+    56.568542494923804,
+    90.64766957842876,
+    108.08330120791094,
+    133.04134695650072,
+    203.100960115899,
+    370.80992435478316
+  ],
+  "reference_kind": "calibrated_reference_bridge",
+  "reference_quantity": "GOES-15 EPEAD W-labelled UNCOR differential channel-equivalent estimate",
+  "schema": "sep-proton-response-calibration-v1",
+  "status": "passed",
+  "training_fingerprint": "19c7f15d84c911c320c5efe770796f1da828ee96c2b39ce9fb35a0bf07b7e12d",
+  "training_period": [
+    "2020-11-29 00:00:00+00:00",
+    "2024-10-09 11:50:00+00:00"
+  ],
+  "units": "protons/(cm^2 s sr MeV)",
+  "validation_gates": {
+    "maximum_event_median_absolute_relative_error": 0.35,
+    "maximum_event_median_relative_bias": 0.3,
+    "maximum_quiet_median_absolute_relative_error": 0.35,
+    "maximum_quiet_median_relative_bias": 0.2,
+    "minimum_event_r2": 0.8,
+    "minimum_training_pairs": 200,
+    "minimum_validation_coverage": 0.95,
+    "minimum_validation_pairs_per_regime": 100
+  },
+  "validation_target_note": "Held-out targets are reference-model estimates, not new legacy observations"
+}

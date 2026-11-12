@@ -39,11 +39,11 @@ def test_flare_cohort_is_swpc_goes_c_m_x_and_keeps_missing_position_missing():
 
 def test_observed_three_point_enhancement_produces_positive_and_actual_metrics():
     flux = _flux()
-    flux.loc["2025-01-02T01:00Z":"2025-01-02T01:55Z", "GT10"] = 8.0
+    flux.loc["2025-01-02T01:00:00Z":"2025-01-02T01:55:00Z", "GT10"] = 8.0
     labels, audit = cc.label_flare_events(_flare(), flux)
     assert labels.event_type.tolist() == [1]
-    assert labels.iloc[0].sep_start == pd.Timestamp("2025-01-02T01:00Z")
-    assert labels.iloc[0].sep_end == pd.Timestamp("2025-01-02T02:00Z")
+    assert labels.iloc[0].sep_start == pd.Timestamp("2025-01-02T01:00:00Z")
+    assert labels.iloc[0].sep_end == pd.Timestamp("2025-01-02T02:00:00Z")
     assert labels.iloc[0].sep_rise == 1.0
     assert labels.iloc[0].sep_duration == 1.0
     assert labels.iloc[0].sep_peak_2 == 8.0
@@ -61,13 +61,13 @@ def test_high_existing_background_is_not_mistaken_for_new_sep():
 
 def test_only_two_samples_above_threshold_remains_negative():
     flux = _flux()
-    flux.loc["2025-01-02T01:00Z":"2025-01-02T01:05Z", "GT10"] = 8
+    flux.loc["2025-01-02T01:00:00Z":"2025-01-02T01:05:00Z", "GT10"] = 8
     labels, _ = cc.label_flare_events(_flare(), flux)
     assert labels.event_type.tolist() == [0]
 
 
 def test_missing_background_or_forecast_never_becomes_negative():
-    for missing in ["2025-01-01T23:55Z", "2025-01-02T02:00Z"]:
+    for missing in ["2025-01-01T23:55:00Z", "2025-01-02T02:00:00Z"]:
         flux = _flux().drop(pd.Timestamp(missing))
         labels, audit = cc.label_flare_events(_flare(), flux)
         assert labels.empty
@@ -77,8 +77,8 @@ def test_missing_background_or_forecast_never_becomes_negative():
 
 def test_incomplete_forecast_excludes_positive_in_strict_mode():
     flux = _flux()
-    flux.loc["2025-01-02T01:00Z":"2025-01-02T01:55Z", "GT10"] = 8
-    flux = flux.drop(pd.Timestamp("2025-01-02T04:00Z"))
+    flux.loc["2025-01-02T01:00:00Z":"2025-01-02T01:55:00Z", "GT10"] = 8
+    flux = flux.drop(pd.Timestamp("2025-01-02T04:00:00Z"))
     assert cc.label_flare_events(_flare(), flux)[0].empty
     labels, audit = cc.label_flare_events(_flare(), flux, strictcoverage=False)
     assert labels.event_type.tolist() == [1]
@@ -88,7 +88,7 @@ def test_incomplete_forecast_excludes_positive_in_strict_mode():
 def test_competing_flares_assign_one_enhancement_to_largest_xray_flare():
     flares = pd.concat([_flare(), _flare("2025-01-02T00:30:00", "M1.0")], ignore_index=True)
     flux = _flux()
-    flux.loc["2025-01-02T01:00Z":"2025-01-02T01:55Z", "GT10"] = 8
+    flux.loc["2025-01-02T01:00:00Z":"2025-01-02T01:55:00Z", "GT10"] = 8
     labels, audit = cc.label_flare_events(flares, flux)
     assert labels.event_type.tolist() == [0, 1]
     assert audit.status.tolist() == ["negative_competing_flare", "positive"]
@@ -101,7 +101,7 @@ def test_competing_halo_across_year_boundary_does_not_export_halo_rows():
         _flare("2025-01-01T00:00:00", "C1.0", _in_requested_range=True),
     ], ignore_index=True)
     flux = _flux()
-    flux.loc["2025-01-01T01:00Z":"2025-01-01T01:55Z", "GT10"] = 8
+    flux.loc["2025-01-01T01:00:00Z":"2025-01-01T01:55:00Z", "GT10"] = 8
     labels, audit = cc.label_flare_events(flares, flux)
     assert len(labels) == len(audit) == 1
     assert labels.event_type.tolist() == [0]
@@ -110,7 +110,7 @@ def test_competing_halo_across_year_boundary_does_not_export_halo_rows():
 
 def test_missing_other_energy_band_is_not_substituted_or_fabricated():
     flux = _flux()
-    flux.loc["2025-01-02T01:00Z":"2025-01-02T01:55Z", "GT10"] = 8
+    flux.loc["2025-01-02T01:00:00Z":"2025-01-02T01:55:00Z", "GT10"] = 8
     flux["GT60"] = np.nan
     labels, audit = cc.label_flare_events(_flare(), flux)
     assert labels.event_type.tolist() == [1]
@@ -122,8 +122,8 @@ def test_subcadence_flare_uses_only_points_inside_true_background_window():
     flux = _flux()
     # This point is outside the exact three-hour window for 00:03, and must
     # not falsely raise its background maximum.
-    flux.loc["2025-01-01T21:00Z", "GT10"] = 100
-    flux.loc["2025-01-02T01:00Z":"2025-01-02T01:55Z", "GT10"] = 8
+    flux.loc["2025-01-01T21:00:00Z", "GT10"] = 100
+    flux.loc["2025-01-02T01:00:00Z":"2025-01-02T01:55:00Z", "GT10"] = 8
     labels, audit = cc.label_flare_events(_flare("2025-01-02T00:03:00"), flux)
     assert labels.event_type.tolist() == [1]
     assert audit.iloc[0].background_max_gt10_pfu == 0.5
@@ -163,4 +163,50 @@ def test_provider_gets_background_and_future_padding():
 
     labels, _ = cc.label_flare_events(_flare(), flux_provider=provider)
     assert labels.event_type.tolist() == [0]
-    assert calls == [(pd.Timestamp("2024-12-31T21:00Z"), pd.Timestamp("2025-03-03T06:00Z"))]
+    assert calls == [(pd.Timestamp("2024-12-31T21:00:00Z"), pd.Timestamp("2025-03-03T06:00:00Z"))]
+
+
+def test_collector_quarantines_physical_flare_alias_with_conflicting_provisional_labels():
+    flares = pd.concat([
+        _flare("2025-01-02T00:00:00", "M1.0", noaa_active_region=13944,
+               Flrmaxtime=pd.Timestamp("2025-01-02T00:10:00Z")),
+        _flare("2025-01-02T00:04:00", "C1.0", noaa_active_region=13944,
+               Flrmaxtime=pd.Timestamp("2025-01-02T00:10:00Z")),
+    ], ignore_index=True)
+    flux = _flux()
+    flux.loc["2025-01-02T01:00:00Z":"2025-01-02T01:55:00Z", "GT10"] = 8
+    labels, audit = cc.label_flare_events(flares, flux)
+    assert labels.empty
+    assert set(audit.classification_event_type) == {0, 1}
+    assert audit.event_type.isna().all()
+    assert audit.status.eq("excluded_conflicting_physical_flare_labels").all()
+    assert audit.canonical_flare_id.nunique() == 1
+    assert audit.physical_flare_group_size.eq(2).all()
+    assert set(audit.classification_status) == {"positive", "negative_competing_flare"}
+
+
+def test_collector_keeps_one_same_label_catalog_duplicate_with_audit():
+    one = _flare("2025-01-02T00:00:00", noaa_active_region=13944)
+    labels, audit = cc.label_flare_events(pd.concat([one, one], ignore_index=True), _flux())
+    assert len(labels) == 1
+    assert labels.event_type.tolist() == [0]
+    assert audit.status.tolist().count("excluded_duplicate_physical_flare") == 1
+    assert audit.classification_event_type.eq(0).all()
+    assert audit.event_type.notna().sum() == 1
+
+
+def test_collector_halo_positive_cannot_reappear_as_negative_alias_inside_requested_dates():
+    flares = pd.concat([
+        _flare("2024-12-31T23:58:00", "M1.0", _in_requested_range=False,
+               noaa_active_region=13944, Flrmaxtime=pd.Timestamp("2025-01-01T00:08:00Z")),
+        _flare("2025-01-01T00:02:00", "C1.0", _in_requested_range=True,
+               noaa_active_region=13944, Flrmaxtime=pd.Timestamp("2025-01-01T00:08:00Z")),
+    ], ignore_index=True)
+    flux = _flux()
+    flux.loc["2025-01-01T01:00:00Z":"2025-01-01T01:55:00Z", "GT10"] = 8
+    labels, audit = cc.label_flare_events(flares, flux)
+    assert labels.empty
+    assert len(audit) == 1
+    assert audit.iloc[0].classification_event_type == 0
+    assert audit.iloc[0].status == "excluded_conflicting_physical_flare_labels"
+    assert pd.isna(audit.iloc[0].event_type)

@@ -1,0 +1,447 @@
+{
+  "requested_sources": [
+    "G16L1b",
+    "G18L2",
+    "G19L2"
+  ],
+  "downloaded_files": 49,
+  "unavailable_sources": [],
+  "coverage": [
+    {
+      "bridge_plan": "G16L1b",
+      "source_key": {
+        "source_satellite": "GOES-16",
+        "source_product": "NOAA_SGPS_L1B_VALID_1S_TO_5MIN",
+        "source_detector": "SGPS-X physical west",
+        "energy_coordinate_basis": "geometric_mean_of_native_L1b_nominal_label_bounds"
+      },
+      "status": "passed",
+      "calibration_id": "05b5b8d66c76602029fa987ffa6f296f248f3e2fb8dd28957dd85bfee953c3c8",
+      "failure_reasons": [],
+      "planned_days": 11,
+      "unavailable_days": [
+        {
+          "day": "2021-11-01",
+          "split": "validation",
+          "reason": "Calibrate one source group at a time: source_detector"
+        }
+      ],
+      "upstream_reference_coverage": {
+        "quiet": {
+          "requested_rows": 288,
+          "reference_supported_rows": 286,
+          "reference_coverage": 0.9930555555555556
+        },
+        "event": {
+          "requested_rows": 864,
+          "reference_supported_rows": 695,
+          "reference_coverage": 0.8043981481481481
+        }
+      },
+      "validation": {
+        "P4": {
+          "quiet": {
+            "requested_rows": 286,
+            "valid_pairs": 286,
+            "coverage": 1.0,
+            "median_relative_bias": 0.030859030306537916,
+            "median_absolute_relative_error": 0.04433791401945952,
+            "r2": 0.6612896268295512,
+            "observed_median": 0.062211844700303054,
+            "predicted_median": 0.06302998902791494,
+            "absolute_error_p95": 0.034162044338784545
+          },
+          "event": {
+            "requested_rows": 695,
+            "valid_pairs": 695,
+            "coverage": 1.0,
+            "median_relative_bias": 0.03266340261409928,
+            "median_absolute_relative_error": 0.05304259673004785,
+            "r2": 0.9400422713275296,
+            "observed_median": 0.6269729309796774,
+            "predicted_median": 0.6324192312284007,
+            "absolute_error_p95": 0.32600471716768825
+          }
+        },
+        "P5": {
+          "quiet": {
+            "requested_rows": 286,
+            "valid_pairs": 286,
+            "coverage": 1.0,
+            "median_relative_bias": 0.001809147530528965,
+            "median_absolute_relative_error": 0.005850284707752729,
+            "r2": 0.9873844803165681,
+            "observed_median": 0.016996325727963252,
+            "predicted_median": 0.01692646330085261,
+            "absolute_error_p95": 0.00025081764701511463
+          },
+          "event": {
+            "requested_rows": 695,
+            "valid_pairs": 695,
+            "coverage": 1.0,
+            "median_relative_bias": 0.0008339066969735853,
+            "median_absolute_relative_error": 0.004114108940013295,
+            "r2": 0.9998863450351918,
+            "observed_median": 0.1150652756267105,
+            "predicted_median": 0.11493546386277441,
+            "absolute_error_p95": 0.002298532192026108
+          }
+        },
+        "P6": {
+          "quiet": {
+            "requested_rows": 286,
+            "valid_pairs": 286,
+            "coverage": 1.0,
+            "median_relative_bias": 0.0031195215045519697,
+            "median_absolute_relative_error": 0.008316670557412587,
+            "r2": 0.7014427784730908,
+            "observed_median": 0.0044094540862496465,
+            "predicted_median": 0.004416218696679221,
+            "absolute_error_p95": 9.647800479767711e-05
+          },
+          "event": {
+            "requested_rows": 695,
+            "valid_pairs": 695,
+            "coverage": 1.0,
+            "median_relative_bias": 0.007052497418559067,
+            "median_absolute_relative_error": 0.016786303637271738,
+            "r2": 0.9982679584223098,
+            "observed_median": 0.008546192657645092,
+            "predicted_median": 0.008453059412551495,
+            "absolute_error_p95": 0.0007463957805843698
+          }
+        }
+      }
+    },
+    {
+      "bridge_plan": "G18L2",
+      "source_key": {
+        "source_satellite": "GOES-18",
+        "source_product": "NOAA_SGPS_L2_AVG5M",
+        "source_detector": "SGPS-X physical west",
+        "energy_coordinate_basis": "native_L2_DiffProtonEffectiveEnergy"
+      },
+      "status": "passed",
+      "calibration_id": "7fee8c1ff0a61f14a12333ef4b5eb23afd228a0af4023dd3490b1fd3a257b7d8",
+      "failure_reasons": [],
+      "planned_days": 9,
+      "unavailable_days": [],
+      "upstream_reference_coverage": {
+        "quiet": {
+          "requested_rows": 576,
+          "reference_supported_rows": 574,
+          "reference_coverage": 0.9965277777777778
+        },
+        "event": {
+          "requested_rows": 864,
+          "reference_supported_rows": 695,
+          "reference_coverage": 0.8043981481481481
+        }
+      },
+      "validation": {
+        "P4": {
+          "quiet": {
+            "requested_rows": 574,
+            "valid_pairs": 574,
+            "coverage": 1.0,
+            "median_relative_bias": 0.0029354563475630924,
+            "median_absolute_relative_error": 0.09133269739554684,
+            "r2": 0.8304484408213214,
+            "observed_median": 0.02087154865831901,
+            "predicted_median": 0.01950448547941077,
+            "absolute_error_p95": 0.022633031050734886
+          },
+          "event": {
+            "requested_rows": 695,
+            "valid_pairs": 694,
+            "coverage": 0.9985611510791367,
+            "median_relative_bias": -0.04294474335011039,
+            "median_absolute_relative_error": 0.11167460251211814,
+            "r2": 0.9542061368021979,
+            "observed_median": 0.16069374588774113,
+            "predicted_median": 0.15507738708629581,
+            "absolute_error_p95": 2.0812835212341194
+          }
+        },
+        "P5": {
+          "quiet": {
+            "requested_rows": 574,
+            "valid_pairs": 574,
+            "coverage": 1.0,
+            "median_relative_bias": 0.002722416924658577,
+            "median_absolute_relative_error": 0.04016716449431873,
+            "r2": 0.6775078849319592,
+            "observed_median": 0.015033388778408536,
+            "predicted_median": 0.015066765329924856,
+            "absolute_error_p95": 0.0019188530951076462
+          },
+          "event": {
+            "requested_rows": 695,
+            "valid_pairs": 695,
+            "coverage": 1.0,
+            "median_relative_bias": -0.006435583545952306,
+            "median_absolute_relative_error": 0.05324895163746146,
+            "r2": 0.9883752401698748,
+            "observed_median": 0.03028805679153962,
+            "predicted_median": 0.03060847913281235,
+            "absolute_error_p95": 0.012851701272315937
+          }
+        },
+        "P6": {
+          "quiet": {
+            "requested_rows": 574,
+            "valid_pairs": 574,
+            "coverage": 1.0,
+            "median_relative_bias": 0.0027627810041619405,
+            "median_absolute_relative_error": 0.017037338744801955,
+            "r2": 0.0853907317705781,
+            "observed_median": 0.0043334639378794695,
+            "predicted_median": 0.004342615448334213,
+            "absolute_error_p95": 0.0002141916652340713
+          },
+          "event": {
+            "requested_rows": 695,
+            "valid_pairs": 695,
+            "coverage": 1.0,
+            "median_relative_bias": 0.006829676923772787,
+            "median_absolute_relative_error": 0.028730187903873716,
+            "r2": 0.974820389960776,
+            "observed_median": 0.004973472085136579,
+            "predicted_median": 0.005036121908157148,
+            "absolute_error_p95": 0.0006763853238552631
+          }
+        }
+      }
+    },
+    {
+      "bridge_plan": "G19L2",
+      "source_key": {
+        "source_satellite": "GOES-19",
+        "source_product": "NOAA_SGPS_L2_AVG5M",
+        "source_detector": "SGPS-X physical west",
+        "energy_coordinate_basis": "native_L2_DiffProtonEffectiveEnergy"
+      },
+      "status": "failed",
+      "calibration_id": "da700d57447e21c266771d0092d2b057cedb2ef7bc9a18599a48ec3861d96311",
+      "failure_reasons": [
+        "P4: quiet: too few held-out pairs",
+        "P4: quiet: held-out coverage below requirement",
+        "P4: quiet: median relative bias exceeds requirement",
+        "P4: quiet: median absolute relative error exceeds requirement",
+        "P5: quiet: too few held-out pairs",
+        "P5: quiet: held-out coverage below requirement",
+        "P5: quiet: median relative bias exceeds requirement",
+        "P5: quiet: median absolute relative error exceeds requirement",
+        "P6: quiet: too few held-out pairs",
+        "P6: quiet: held-out coverage below requirement",
+        "P6: quiet: median relative bias exceeds requirement",
+        "P6: quiet: median absolute relative error exceeds requirement",
+        "P6: event: R2 below requirement"
+      ],
+      "planned_days": 8,
+      "unavailable_days": [],
+      "upstream_reference_coverage": {
+        "quiet": {
+          "requested_rows": 0,
+          "reference_supported_rows": 0,
+          "reference_coverage": 0.0
+        },
+        "event": {
+          "requested_rows": 864,
+          "reference_supported_rows": 513,
+          "reference_coverage": 0.59375
+        }
+      },
+      "validation": {
+        "P4": {
+          "quiet": {
+            "requested_rows": 0,
+            "valid_pairs": 0,
+            "coverage": 0.0,
+            "median_relative_bias": null,
+            "median_absolute_relative_error": null,
+            "r2": null,
+            "observed_median": null,
+            "predicted_median": null,
+            "absolute_error_p95": null
+          },
+          "event": {
+            "requested_rows": 513,
+            "valid_pairs": 512,
+            "coverage": 0.9980506822612085,
+            "median_relative_bias": -0.10483439247093218,
+            "median_absolute_relative_error": 0.11275983100246817,
+            "r2": 0.9851923194227719,
+            "observed_median": 0.20050772618837287,
+            "predicted_median": 0.18216449897335613,
+            "absolute_error_p95": 0.733861064786444
+          }
+        },
+        "P5": {
+          "quiet": {
+            "requested_rows": 0,
+            "valid_pairs": 0,
+            "coverage": 0.0,
+            "median_relative_bias": null,
+            "median_absolute_relative_error": null,
+            "r2": null,
+            "observed_median": null,
+            "predicted_median": null,
+            "absolute_error_p95": null
+          },
+          "event": {
+            "requested_rows": 513,
+            "valid_pairs": 513,
+            "coverage": 1.0,
+            "median_relative_bias": -0.09336199403645029,
+            "median_absolute_relative_error": 0.09991507638494057,
+            "r2": 0.8073089192813578,
+            "observed_median": 0.0204438895231854,
+            "predicted_median": 0.018808739897799496,
+            "absolute_error_p95": 0.2651219538759816
+          }
+        },
+        "P6": {
+          "quiet": {
+            "requested_rows": 0,
+            "valid_pairs": 0,
+            "coverage": 0.0,
+            "median_relative_bias": null,
+            "median_absolute_relative_error": null,
+            "r2": null,
+            "observed_median": null,
+            "predicted_median": null,
+            "absolute_error_p95": null
+          },
+          "event": {
+            "requested_rows": 513,
+            "valid_pairs": 513,
+            "coverage": 1.0,
+            "median_relative_bias": -0.006826576254545302,
+            "median_absolute_relative_error": 0.01684780526537044,
+            "r2": 0.5940476100940321,
+            "observed_median": 0.004397670921223477,
+            "predicted_median": 0.004380345272581263,
+            "absolute_error_p95": 0.01977010081865583
+          }
+        }
+      }
+    },
+    {
+      "bridge_plan": "G19L2",
+      "source_key": {
+        "source_satellite": "GOES-19",
+        "source_product": "NOAA_SGPS_L2_AVG5M",
+        "source_detector": "SGPS+X physical west",
+        "energy_coordinate_basis": "native_L2_DiffProtonEffectiveEnergy"
+      },
+      "status": "failed",
+      "calibration_id": "1bc3bf6146650f31802fbaac7c6306ead3d66ebbb6ae3eff05af56a75e1a303b",
+      "failure_reasons": [
+        "P4: event: too few held-out pairs",
+        "P4: event: held-out coverage below requirement",
+        "P4: event: median relative bias exceeds requirement",
+        "P4: event: median absolute relative error exceeds requirement",
+        "P4: event: R2 below requirement",
+        "P5: event: too few held-out pairs",
+        "P5: event: held-out coverage below requirement",
+        "P5: event: median relative bias exceeds requirement",
+        "P5: event: median absolute relative error exceeds requirement",
+        "P5: event: R2 below requirement",
+        "P6: event: too few held-out pairs",
+        "P6: event: held-out coverage below requirement",
+        "P6: event: median relative bias exceeds requirement",
+        "P6: event: median absolute relative error exceeds requirement",
+        "P6: event: R2 below requirement"
+      ],
+      "planned_days": 8,
+      "unavailable_days": [],
+      "upstream_reference_coverage": {
+        "quiet": {
+          "requested_rows": 288,
+          "reference_supported_rows": 288,
+          "reference_coverage": 1.0
+        },
+        "event": {
+          "requested_rows": 0,
+          "reference_supported_rows": 0,
+          "reference_coverage": 0.0
+        }
+      },
+      "validation": {
+        "P4": {
+          "quiet": {
+            "requested_rows": 288,
+            "valid_pairs": 288,
+            "coverage": 1.0,
+            "median_relative_bias": -0.0020386563482207576,
+            "median_absolute_relative_error": 0.07300176492382071,
+            "r2": -0.5726587782434494,
+            "observed_median": 0.0163552301612591,
+            "predicted_median": 0.016130113891837217,
+            "absolute_error_p95": 0.003403371338785287
+          },
+          "event": {
+            "requested_rows": 0,
+            "valid_pairs": 0,
+            "coverage": 0.0,
+            "median_relative_bias": null,
+            "median_absolute_relative_error": null,
+            "r2": null,
+            "observed_median": null,
+            "predicted_median": null,
+            "absolute_error_p95": null
+          }
+        },
+        "P5": {
+          "quiet": {
+            "requested_rows": 288,
+            "valid_pairs": 288,
+            "coverage": 1.0,
+            "median_relative_bias": 0.012378318303501223,
+            "median_absolute_relative_error": 0.024600828407869924,
+            "r2": -0.21581929575188696,
+            "observed_median": 0.014381434572588198,
+            "predicted_median": 0.014547619988237271,
+            "absolute_error_p95": 0.0009712467751805837
+          },
+          "event": {
+            "requested_rows": 0,
+            "valid_pairs": 0,
+            "coverage": 0.0,
+            "median_relative_bias": null,
+            "median_absolute_relative_error": null,
+            "r2": null,
+            "observed_median": null,
+            "predicted_median": null,
+            "absolute_error_p95": null
+          }
+        },
+        "P6": {
+          "quiet": {
+            "requested_rows": 288,
+            "valid_pairs": 288,
+            "coverage": 1.0,
+            "median_relative_bias": 0.0010821327376667744,
+            "median_absolute_relative_error": 0.010044421229876255,
+            "r2": -0.028800646012664632,
+            "observed_median": 0.004316496203288207,
+            "predicted_median": 0.004318794220237237,
+            "absolute_error_p95": 0.00012774121626345268
+          },
+          "event": {
+            "requested_rows": 0,
+            "valid_pairs": 0,
+            "coverage": 0.0,
+            "median_relative_bias": null,
+            "median_absolute_relative_error": null,
+            "r2": null,
+            "observed_median": null,
+            "predicted_median": null,
+            "absolute_error_p95": null
+          }
+        }
+      }
+    }
+  ]
+}

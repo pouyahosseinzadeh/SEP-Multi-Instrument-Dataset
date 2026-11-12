@@ -16,10 +16,10 @@ def test_clean_command_reuses_completed_enhanced_data_by_default(monkeypatch):
     assert not kwargs
 
 
-def test_default_analysis_commands_select_cleaned_dataset():
+def test_default_analysis_commands_select_repaired_dataset():
     parser = cli.build_parser()
     for command in ("validate", "plot", "paper-plot"):
-        assert parser.parse_args([command]).dataset_dir == cli.CLEANED_DIR
+        assert parser.parse_args([command]).dataset_dir == cli.REPAIRED_DIR
 
 
 def test_original_ten_cleanup_reuses_archive_and_has_separate_default_output(monkeypatch):
