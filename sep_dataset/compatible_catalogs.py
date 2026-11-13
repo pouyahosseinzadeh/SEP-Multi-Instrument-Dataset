@@ -24,13 +24,13 @@ import numpy as np
 import pandas as pd
 
 from .utils import cache_key, ensure_dir, isoformat_z, iter_month_starts, next_month, utc_timestamp
-from .flare_integrity import audit_flare_identities, assert_flare_label_integrity
+from .flare_integrity import audit_flare_identities, assert_flare_label_integrity, normalize_noaa_region
 
 HEK_URL = "https://www.lmsal.com/hek/her"
 METHOD_URL = "https://arxiv.org/pdf/2310.15390"
 INTEGRAL_COLUMNS = ("GT5", "GT10", "GT30", "GT60", "GT100")
 CADENCE = pd.Timedelta(minutes=5)
-ASSOCIATION_RULE = "preceding_6h_same_above5_episode_largest_goes_class_v2_identity_audited"
+ASSOCIATION_RULE = "preceding_6h_same_above5_episode_largest_goes_class_v3_region_identity_audited"
 
 
 def _date_bounds(start: object, end: object) -> tuple[pd.Timestamp, pd.Timestamp]:
@@ -127,9 +127,15 @@ def parse_hek_flares(records: list[dict]) -> pd.DataFrame:
     if not rows:
         return pd.DataFrame(columns=["FlrOnset", "xrsclass", "Peak Flux", "_flare_id"])
     df = pd.DataFrame(rows)
-    # Repeated query boundaries and revisions must not multiply flare samples.
+    # Repeated pages/revisions of a flare should not multiply samples. Keep
+    # distinct known regions at the same onset so the identity audit can
+    # quarantine that ambiguity instead of silently picking one region.
     df = df.sort_values(["_archived", "_revision"], na_position="first")
-    df = df.drop_duplicates("_flare_id", keep="last").drop_duplicates("FlrOnset", keep="last")
+    df = df.drop_duplicates("_flare_id", keep="last").copy()
+    df["_known_region"] = df["noaa_active_region"].map(normalize_noaa_region)
+    known_onsets = df.loc[df["_known_region"].notna(), "FlrOnset"]
+    df = df[df["_known_region"].notna() | ~df["FlrOnset"].isin(known_onsets)]
+    df = df.drop_duplicates(["FlrOnset", "_known_region"], keep="last").drop(columns="_known_region")
     return df.sort_values("FlrOnset").reset_index(drop=True)
 
 

@@ -6,18 +6,19 @@ import gzip
 import hashlib
 import json
 from pathlib import Path
+import re
 
 import numpy as np
 import pandas as pd
 
 from .cleaned_builder import _load_quality, _read_feature
 from .compatible_builder import file_sha256, window_index
-from .enhanced_builder import LEGACY_END, feature_columns
+from .enhanced_builder import LEGACY_END, NATIVE_WORKFLOW, feature_columns
 from .historical_masks import load_mask_bundle, apply_historical_masks, DEFAULT_BUNDLE
 from .proton_calibration import KEY_FIELDS, load_calibration_bank, apply_calibration_bank
 
 DEFAULT_BANK = Path(__file__).resolve().parents[1] / "calibration" / "proton_calibration_bank.json"
-VERSION = "raw-masks-spectral-response-v2"
+VERSION = "raw-masks-spectral-response-v3"
 BAD_CALIBRATION = {"unsupported_source", "unsupported_energy_grid", "outside_validated_spectral_range"}
 
 
@@ -28,13 +29,25 @@ def source_key(row):
 class RepairAdapter:
     def __init__(self, root, original_manifest, calibration_bank=None, historical_masks=None, cache_dir=None):
         self.root, self.manifest = Path(root), original_manifest
+        self.fresh = self.manifest.get("workflow") == NATIVE_WORKFLOW
         self.bank_path = Path(calibration_bank or DEFAULT_BANK)
         self.mask_path = Path(historical_masks or DEFAULT_BUNDLE)
         self.bank = load_calibration_bank(self.bank_path)
         self.masks = load_mask_bundle(self.mask_path)
         self.bank_sha = file_sha256(self.bank_path)
+        if self.fresh and self.manifest.get("config", {}).get("calibration_bank_sha256") != self.bank_sha:
+            raise ValueError("Use the same validated calibration bank for collection and repair.")
         self.cache_dir = Path(cache_dir or self.root.parent / ".proton_response_cache")
-        self.native_paths = {p.name: p for p in (self.root / "continuation_audit").glob("native_sgps_*.csv")}
+        self.native_paths, self.native_months = {}, {}
+        for path in (self.root / "continuation_audit").glob("native_sgps_*.csv*"):
+            match = re.fullmatch(r"native_sgps_(\d{4}-\d{2})\.csv(?:\.gz)?", path.name)
+            if not match:
+                continue
+            month = match[1]
+            if month in self.native_months:
+                raise ValueError(f"Multiple native proton audits for {month} in {path.parent}")
+            self.native_months[month] = path.name
+            self.native_paths[path.name] = path
         self.native_hashes = {name: file_sha256(path) for name, path in self.native_paths.items()}
         self.expected_hashes = {}
         for entry in original_manifest.get("feature_files", []):
@@ -52,7 +65,8 @@ class RepairAdapter:
                        "native_audit_files": self.native_hashes,
                        "calibration_quantity": "legacy instrument-equivalent estimates; not native EPEAD observations",
                        "unsupported_policy": "quarantine a whole window if any native point has an unsupported source, energy grid or tested spectral range",
-                       "whole_median_policy": "wholly median-filled source rows have no observed anchors and are unavailable"}
+                       "prior_gap_policy": "restore earlier I/E/M cells to missing before final interpolation",
+                       "transition_policy": "exclude proton windows spanning both the original-channel and modern source periods"}
 
     def _remember_keys(self, mapped):
         keys = set(mapped.get("source_calibration_key", pd.Series(dtype=str)).dropna().astype(str)) - {""}
@@ -63,9 +77,9 @@ class RepairAdapter:
         if month in self.memory:
             self.memory.move_to_end(month)
             return self.memory[month]
-        name = f"native_sgps_{month}.csv"
-        if name not in self.native_paths:
-            raise ValueError(f"Missing {self.root / 'continuation_audit' / name}. Restore the native continuation audit from the completed enhanced archive; old uncalibrated proton values cannot substitute for it.")
+        name = self.native_months.get(month)
+        if name is None:
+            raise ValueError(f"Missing native SGPS audit for {month} in {self.root / 'continuation_audit'}. Complete native acquisition or restore the checksummed audit.")
         path = self.native_paths[name]
         expected = self.expected_hashes.get("continuation_audit/" + name)
         if not expected:
@@ -90,7 +104,10 @@ class RepairAdapter:
                 raise ValueError("Native proton timestamps are not unique and valid: " + name)
             if any(key not in native for key in KEY_FIELDS):
                 raise ValueError("Native proton audit lacks source identity: " + name)
-            present = native.source_product.astype(str).str.startswith("NOAA_SGPS_")
+            # Rows rejected by the native instrument QC have no measured
+            # spectrum to calibrate. They remain gaps, including unknown yaw.
+            flux = native.filter(regex=r"^native_flux_\d+$").to_numpy(dtype=float)
+            present = native.source_product.astype(str).str.startswith("NOAA_SGPS_") & (np.isfinite(flux) & (flux >= 0)).any(axis=1)
             mapped = pd.DataFrame(index=native.index)
             for feature in ("P4", "P5", "P6"):
                 mapped[feature] = np.nan
@@ -132,11 +149,15 @@ class RepairAdapter:
         if feature != "Vx":
             values[values < 0] = -9999.0
         whole_median = q.point_status.eq("M"*288).to_numpy()
-        values[whole_median] = -9999.0
-        q.loc[whole_median, "point_status"] = "G"*288
+        masks = np.frombuffer(q.point_status.str.cat().encode("ascii"), dtype="S1").reshape(len(q), 288).copy()
+        prior_fill = np.isin(masks, [b"I", b"E", b"M"])
+        values[prior_fill] = -9999.0
+        masks[prior_fill] = b"G"
+        q["point_status"] = [row.tobytes().decode("ascii") for row in masks]
         q["source_calibration_keys"] = "[]"
         q["calibration_ids"] = "[]"
         q["unsupported_calibration_row"] = False
+        q["mixed_proton_transition_window"] = False
         q["calibration_out_of_domain_points"] = 0
         onsets = pd.to_datetime(frame.FlrOnset, utc=True, format="mixed")
         eligible = np.flatnonzero(onsets.gt(LEGACY_END).to_numpy()) if feature in ("P4", "P5", "P6") else []
@@ -146,9 +167,17 @@ class RepairAdapter:
                 print(f"[REPAIR PROTON] {feature}: {number}/{len(eligible)}", flush=True)
             grid = window_index(onset)
             replace = grid >= LEGACY_END
+            if not replace.any():
+                continue
+            if not replace.all():
+                values[row] = -9999.0
+                q.loc[row, "point_status"] = "G"*288
+                q.loc[row, "mixed_proton_transition_window"] = True
+                continue
             source = self._month(onset.strftime("%Y-%m")).reindex(grid)
             status_values = source[feature+"_calibration_status"].fillna("missing_or_invalid_native_spectrum")
-            unsupported = status_values.isin(BAD_CALIBRATION).to_numpy() & replace
+            available_before_onset = grid + pd.Timedelta(minutes=5) <= onset
+            unsupported = status_values.isin(BAD_CALIBRATION).to_numpy() & replace & available_before_onset
             if unsupported.any():
                 values[row] = -9999.0
                 q.loc[row, "point_status"] = "G"*288
@@ -157,7 +186,7 @@ class RepairAdapter:
                 self.unsupported_rows.add(int(row))
                 continue
             candidate = source[feature].to_numpy(dtype=float)
-            candidate[grid+pd.Timedelta(minutes=5) > onset] = np.nan
+            candidate[~available_before_onset] = np.nan
             letters = np.array(list(str(q.loc[row, "point_status"])), dtype="U1")
             letters[replace] = "G"
             values[row, replace] = -9999.0
@@ -171,17 +200,23 @@ class RepairAdapter:
                         values[row, j], letters[j] = candidate[j], "D"
                         used_keys.add(str(last_key))
                         used_ids.add(str(last_id))
-                elif replace[j] and last_time is not None and grid[j]-last_time <= pd.Timedelta(minutes=10):
+                elif not self.fresh and replace[j] and last_time is not None and grid[j]-last_time <= pd.Timedelta(minutes=10):
                     values[row, j], letters[j] = last_value, "H"
                     used_keys.add(str(last_key))
                     used_ids.add(str(last_id))
             q.loc[row, "source_calibration_keys"] = json.dumps(sorted(used_keys-{ "", "nan", "None" }))
             q.loc[row, "calibration_ids"] = json.dumps(sorted(used_ids-{ "", "nan", "None" }))
             q.loc[row, "point_status"] = "".join(letters)
-            q.loc[row, "source_method"] = "validated_nonnegative_spectral_response_legacy_equivalent; bounded_causal_hold_10min"
+            method = "validated_nonnegative_spectral_response_legacy_equivalent"
+            q.loc[row, "source_method"] = method if self.fresh else method + "; bounded_causal_hold_10min"
+            if used_keys:
+                sources = [json.loads(key) for key in used_keys]
+                q.loc[row, "source_era"] = " | ".join(sorted({f"{key['source_satellite']} {key['source_product']}" for key in sources}))
+                q.loc[row, "source_satellites"] = " | ".join(sorted({key["source_satellite"] for key in sources}))
         frame[columns] = values
         self.feature_reports[feature] = {"rows": rows, "modern_rows_recomputed": len(eligible),
                                          "whole_median_rows_unavailable": int(whole_median.sum()),
+                                         "mixed_transition_windows": int(q.mixed_proton_transition_window.sum()),
                                          "unsupported_windows": int(q.unsupported_calibration_row.sum())}
         return frame, q
 

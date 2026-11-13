@@ -9,14 +9,22 @@ ENHANCED_DIR = "data/processed/enhanced_1998_2025"
 CLEANED_DIR = "data/processed/cleaned_1998_2025"
 CLEANED_TEN_DIR = "data/processed/cleaned_ten_1998_2025"
 REPAIRED_DIR = "data/processed/repaired_ten_1998_2025"
-FIGURE_DIR = "reports/figures_repaired_ten_1998_2025"
+FRESH_DATASET_DIR = "data/processed/recollected_ten_1998_2025"
+FIGURE_DIR = "reports/figures_recollected_ten_1998_2025"
+FRESH_WORK_DIR = "data/fresh_1998_2025"
 PLOT_FEATURES = ("Vx", "flow_speed", "proton_density", "T", "F", "Xs", "Xl", "P4", "P5", "P6")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Preserve the original ten features, add USFLUXL/R_VALUE and a flagged SGPS proton continuation, and produce paper figures.")
+    parser = argparse.ArgumentParser(description="Collect, validate and evaluate the ten-feature SEP/NSEP dataset.")
     sub = parser.add_subparsers(dest="command", required=True)
-    build = sub.add_parser("build", help="Build/reuse the original ten files, then create twelve enhanced feature files.")
+    collect = sub.add_parser("collect", help="Acquire original-ten observations and modern native SGPS spectra, with resumable checkpoints.")
+    collect.add_argument("--work-dir", default=FRESH_WORK_DIR)
+    collect.add_argument("--end-date", default="2025-12-31")
+    collect.add_argument("--baseline-dir", help="Local alternative to downloading the ten published historical files.")
+    collect.add_argument("--historical-masks", help="Path to the original historical availability bundle.")
+    collect.add_argument("--calibration-bank", help="Path to the validated instrument-response bank.")
+    build = sub.add_parser("build", help="Run the archived original-ten or twelve-feature build.")
     build.add_argument("--end-date", "--end", default="2025-12-31")
     build.add_argument("--extension-start", default="2014-01-01")
     build.add_argument("--outdir", "--output-dir", default=None, help=f"Enhanced output directory (default {ENHANCED_DIR}); with --legacy-only, the original output directory.")
@@ -41,9 +49,9 @@ def build_parser() -> argparse.ArgumentParser:
     repair.add_argument("--dataset-dir", default=ENHANCED_DIR)
     repair.add_argument("--outdir", default=REPAIRED_DIR)
     repair.add_argument("--calibration-bank", help="Validated calibration bank; defaults to the versioned bundled bank.")
-    repair.add_argument("--historical-masks", help="Checksummed original raw-availability bundle; defaults to the bundled original masks.")
+    repair.add_argument("--historical-masks", help="Checksummed original raw-availability bundle; defaults to the supplied availability files under calibration/.")
     plot = sub.add_parser("plot", help="Original time-series/PCA figures plus new correlations, distributions and coverage diagnostics.")
-    plot.add_argument("--dataset-dir", default=REPAIRED_DIR)
+    plot.add_argument("--dataset-dir", default=FRESH_DATASET_DIR)
     plot.add_argument("--outdir", default=FIGURE_DIR)
     plot.add_argument("--bands", nargs="+", type=int, choices=[5, 10, 30, 60, 100], default=[5, 10, 30, 60, 100])
     plot.add_argument("--features", nargs="+", choices=PLOT_FEATURES, help="Original ten features only; all ten are plotted by default.")
@@ -53,13 +61,13 @@ def build_parser() -> argparse.ArgumentParser:
     plot.add_argument("--with-models", action="store_true", help="After figures, run RF and genuine Time Series Forest separately on all ten features.")
     _model_arguments(plot)
     paper = sub.add_parser("paper-plot", help="Run only the new publication diagnostics, including correlations.")
-    paper.add_argument("--dataset-dir", default=REPAIRED_DIR)
+    paper.add_argument("--dataset-dir", default=FRESH_DATASET_DIR)
     paper.add_argument("--outdir", default=FIGURE_DIR + "/paper")
     paper.add_argument("--features", nargs="+", choices=PLOT_FEATURES, default=PLOT_FEATURES)
     valid = sub.add_parser("validate", help="Verify all files, exact sample alignment, checksums and per-point quality masks.")
-    valid.add_argument("--dataset-dir", default=REPAIRED_DIR)
+    valid.add_argument("--dataset-dir", default=FRESH_DATASET_DIR)
     benchmark = sub.add_parser("benchmark", help="Run only leakage-controlled univariate RF/Time Series Forest evaluations and compact plots.")
-    benchmark.add_argument("--dataset-dir", default=REPAIRED_DIR)
+    benchmark.add_argument("--dataset-dir", default=FRESH_DATASET_DIR)
     benchmark.add_argument("--outdir", default=FIGURE_DIR+"/models")
     _model_arguments(benchmark)
     return parser
@@ -94,6 +102,28 @@ def _clean(dataset_dir, outdir=CLEANED_DIR, features=None):
     return result
 
 
+def _collect(args):
+    from shutil import disk_usage
+    from .compatible_builder import build_compatible_dataset
+    from .enhanced_builder import enhance_dataset
+    from .historical_masks import load_mask_bundle
+    from .proton_calibration import load_calibration_bank
+    from .repair_sources import DEFAULT_BANK
+
+    load_mask_bundle(args.historical_masks)
+    load_calibration_bank(args.calibration_bank or DEFAULT_BANK)
+    work = Path(args.work_dir)
+    work.mkdir(parents=True, exist_ok=True)
+    print(f"[COLLECT STORAGE] {work}: {disk_usage(work).free / 1024**3:.2f} GiB available", flush=True)
+    compatible, archive = work / "compatible", work / "native"
+    build_compatible_dataset(end_date=args.end_date, outdir=compatible,
+                             cache_dir=work / "cache" / "compatible", baseline_dir=args.baseline_dir,
+                             raw_extension=True)
+    enhance_dataset(compatible, outdir=archive, cache_dir=work / "cache" / "native",
+                    native_ten_only=True, calibration_bank=args.calibration_bank)
+    print(f"[DONE] Ten-feature native acquisition: {archive}", flush=True)
+
+
 def _enhance(legacy_dir, outdir, cache_dir, magnetic_csv=None, clean_outdir=CLEANED_DIR):
     from .enhanced_builder import enhance_dataset
     result = enhance_dataset(legacy_dir, outdir=outdir, cache_dir=cache_dir, magnetic_csv=magnetic_csv)
@@ -114,13 +144,15 @@ def _completed_manifest(root, action="plotting"):
 
 
 def _validate_release(root, manifest):
+    from .enhanced_builder import NATIVE_WORKFLOW
+
     if manifest.get("workflow") == "repaired_ten_feature_release_v2":
         from .repaired_builder import validate_repaired_dataset
         return validate_repaired_dataset(root)
     if manifest.get("workflow") in ("cleaned_twelve_feature_release", "cleaned_ten_feature_release"):
         from .cleaned_builder import validate_cleaned_dataset
         return validate_cleaned_dataset(root)
-    if manifest.get("workflow") == "enhanced_twelve_feature_research_release":
+    if manifest.get("workflow") in ("enhanced_twelve_feature_research_release", NATIVE_WORKFLOW):
         from .enhanced_builder import validate_enhanced_dataset
         return validate_enhanced_dataset(root)
     from .compatible_builder import validate_dataset
@@ -183,7 +215,9 @@ def _validate_plot_inputs(root, manifest, features):
 
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
-    if args.command == "build":
+    if args.command == "collect":
+        _collect(args)
+    elif args.command == "build":
         from .compatible_builder import build_compatible_dataset
         legacy_dir = (args.outdir or args.legacy_dir) if args.legacy_only else args.legacy_dir
         build_compatible_dataset(end_date=args.end_date, extension_start=args.extension_start,

@@ -100,7 +100,11 @@ class PaperFigureTests(unittest.TestCase):
             correlations = pd.read_csv(root/"figures"/"feature_correlations.csv")
             self.assertTrue(correlations.pearson_r.isna().all())
             self.assertEqual(correlations.n_pairwise.max(), 0)
-            self.assertEqual(len(result["figure_files"]), 24)
+            self.assertEqual(len(result["figure_files"]), 26)
+            yearly = pd.read_csv(root/"figures"/"proton_flux_by_year.csv")
+            self.assertEqual(yearly.valid_window_means.sum(), 0)
+            self.assertTrue(yearly.median_window_mean.isna().all())
+            self.assertEqual(yearly.sample_windows.sum(), 12)
             # Even empty era tables retain a reusable, documented CSV schema.
             eras = pd.read_csv(root/"figures"/"correlations_by_instrument_era.csv")
             self.assertIn("n_pairwise", eras.columns)
@@ -112,7 +116,7 @@ class PaperFigureTests(unittest.TestCase):
                 self._dataset(root, feature)
             out = root/"figures"
             result = run_paper_figures(root, out, features=("Vx", "P4", "Xs"))
-            self.assertEqual(len(result["figure_files"]), 24)
+            self.assertEqual(len(result["figure_files"]), 26)
             self.assertTrue(all(Path(path).is_file() for path in result["figure_files"]))
             manifest = json.loads(Path(result["manifest"]).read_text())
             self.assertEqual(manifest["sample_windows"], 12)
@@ -122,6 +126,11 @@ class PaperFigureTests(unittest.TestCase):
             self.assertTrue((out/"correlations_by_instrument_era.csv").is_file())
             coverage = pd.read_csv(out/"feature_year_coverage.csv")
             self.assertTrue(coverage.unknown_historical_points.gt(0).any())
+            yearly = pd.read_csv(out/"proton_flux_by_year.csv")
+            self.assertEqual(set(yearly.feature), {"P4"})
+            self.assertEqual(yearly.valid_window_means.sum(), 11)
+            self.assertTrue((out/"proton_flux_by_year.pdf").is_file())
+            self.assertTrue((out/"proton_flux_by_year.png").is_file())
             source = pd.read_csv(root/"1998_2025_MEMSEP_dataset_with_P4_filled.csv")
             self.assertEqual(source.shape, (12, 290))
 

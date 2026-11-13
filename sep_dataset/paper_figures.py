@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import pearsonr, spearmanr
 
+from .proton_diagnostics import PROTON_FEATURES, plot_proton_years, summarize_proton_years
 
 FEATURES = ("Vx", "flow_speed", "proton_density", "T", "F", "Xs", "Xl", "P4", "P5", "P6")
 LOG_FEATURES = frozenset(("Xs", "Xl", "P4", "P5", "P6", "USFLUXL"))
@@ -241,6 +242,7 @@ def run_paper_figures(dataset_dir, outdir, features=FEATURES, min_pairs=5, nativ
     outdir.mkdir(parents=True, exist_ok=True)
     plt, artifacts = _plot(), []
     time_tables, coverage_rows, method_rows, era_series = [], [], [], {}
+    proton_years = []
     reference = None
     matrices = {(policy, aggregate): pd.DataFrame() for policy in ("filled", "native_only") for aggregate in ("mean", "median")}
     iqr_values = {}
@@ -258,6 +260,8 @@ def run_paper_figures(dataset_dir, outdir, features=FEATURES, min_pairs=5, nativ
         elif not metadata.equals(reference):
             raise ValueError("All feature files must share metadata, labels and sample order")
         summary.to_csv(outdir/(feature+"_window_summary.csv"), index=False)
+        if feature in PROTON_FEATURES:
+            proton_years.append(summarize_proton_years(feature, dates.dt.year, summary))
         era_series[feature] = summary["source_era"]
         for policy, prefix in (("filled", "filled"), ("native_only", "native")):
             for aggregate in ("mean", "median"):
@@ -414,6 +418,10 @@ def run_paper_figures(dataset_dir, outdir, features=FEATURES, min_pairs=5, nativ
     for ax in axes.ravel()[len(features):]:
         ax.axis("off")
     _save(fig, outdir/"time_resolved_label_association", plt, artifacts)
+    if proton_years:
+        yearly = pd.concat(proton_years, ignore_index=True)
+        yearly.to_csv(outdir / "proton_flux_by_year.csv", index=False)
+        _save(plot_proton_years(yearly, plt), outdir / "proton_flux_by_year", plt, artifacts)
     manifest = {
         "created_utc": datetime.now(timezone.utc).isoformat(), "features": list(features), "sample_windows": len(reference),
         "input_workflow": input_manifest.get("workflow", "original_or_external"),
@@ -427,7 +435,7 @@ def run_paper_figures(dataset_dir, outdir, features=FEATURES, min_pairs=5, nativ
         "time_association_transform": "log10 positive instantaneous flux points; other features unchanged; distinct from log10 of window summaries",
         "native_only_policy": "only finite O-coded values; minimum {} per window; excludes I/E/M/S/G/U/D/H".format(native_min_points),
         "filled_policy": "finite saved values except structural S/remaining gaps G; includes flagged interpolation, median fill, derived SGPS, bounded causal holds and unknown-provenance historical values",
-        "status_codes": {"O": "native observation", "I": "linear interpolation", "E": "edge fill", "M": "historical median fallback", "S": "structural absence", "G": "remaining gap", "U": "unknown historical provenance", "D": "SGPS-derived reference-energy point-flux estimate", "H": "bounded causal hold of a magnetic observation or proton estimate"},
+        "status_codes": {"O": "native observation", "I": "linear interpolation", "E": "edge fill", "M": "historical median fallback", "S": "structural absence", "G": "remaining gap", "U": "unknown historical provenance", "D": "source-derived proton estimate (see input manifest for calibration method)", "H": "bounded causal hold"},
         "prefill_quality": "known provenance only; O/D/H available before gap fill; U excluded from denominator; derived and held are separately reported and are not native observations",
         "instrument_era_analysis": "actual pairwise source_era strings in correlations_by_instrument_era.csv; calendar cohorts are additional descriptive partitions, not instrument-equivalence claims",
         "limitations": ["No significance tests or forecast-accuracy claims", "Overlapping windows, temporal dependence and repeated flare associations may violate independence", "Unknown historical U provenance cannot support observed-only analysis", "Derived proton bands and held magnetogram values are not independent native measurements", "Pairwise missingness changes the cohort between feature pairs; consult n_pairwise", "Class balance, calibration era and median imputation can influence correlations", "Time-resolved correlations are descriptive repeated-bin associations without independence or multiple-testing claims"],

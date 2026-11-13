@@ -37,6 +37,21 @@ def test_flare_cohort_is_swpc_goes_c_m_x_and_keeps_missing_position_missing():
     assert result.iloc[0]["Peak Flux"] == 1e-6
 
 
+def test_exact_onset_retains_conflicting_known_regions_for_identity_audit():
+    rows = [
+        _record(cls="C1.0", ar_noaanum=13944),
+        _record(cls="C2.0", ar_noaanum=13944, kb_archivid="revision-2", revision="2"),
+        _record(cls="C3.0", ar_noaanum=0, kb_archivid="missing-region", revision="3"),
+        _record(cls="C4.0", ar_noaanum=13945, kb_archivid="different-region"),
+    ]
+    flares = cc.parse_hek_flares(rows)
+    assert set(flares.noaa_active_region) == {13944, 13945}
+    assert set(flares.xrsclass) == {"C2.0", "C4.0"}
+    labels, audit = cc.label_flare_events(flares, _flux())
+    assert labels.empty
+    assert audit.status.eq("excluded_ambiguous_physical_flare_identity").all()
+
+
 def test_observed_three_point_enhancement_produces_positive_and_actual_metrics():
     flux = _flux()
     flux.loc["2025-01-02T01:00:00Z":"2025-01-02T01:55:00Z", "GT10"] = 8.0

@@ -91,7 +91,8 @@ def parse_noaa_csv(text: str) -> pd.DataFrame:
     headers = [i for i, line in enumerate(lines) if line.startswith("time_tag,")]
     if len(headers) != 1:
         raise SourceDataError("NOAA CSV lacks a unique time_tag data header")
-    frame = pd.read_csv(StringIO("\n".join(lines[headers[0]:])), skipinitialspace=True)
+    frame = pd.read_csv(StringIO("\n".join(lines[headers[0]:])), skipinitialspace=True,
+                        float_precision="round_trip")
     frame["time_tag"] = pd.to_datetime(frame["time_tag"], utc=True, errors="coerce")
     if frame.empty or frame["time_tag"].isna().any():
         raise SourceDataError("NOAA CSV is empty or contains invalid timestamps")
@@ -246,7 +247,8 @@ class CompatibleSourceStore:
                 saved = json.loads(manifest.read_text())
                 if saved.get("parsed_sha256") != hashlib.sha256(parsed.read_bytes()).hexdigest():
                     raise SourceDataError("Parsed cache checksum is absent or does not match")
-                frame = pd.read_csv(parsed, index_col="Time", parse_dates=["Time"])
+                frame = pd.read_csv(parsed, index_col="Time", parse_dates=["Time"],
+                                    float_precision="round_trip")
                 frame.index = pd.to_datetime(frame.index, utc=True)
                 if not frame.index.equals(_grid(start, stop)):
                     raise SourceDataError("Parsed cache has an incomplete or invalid time grid")
@@ -374,7 +376,8 @@ class CompatibleSourceStore:
             if self.progress:
                 self.progress(f"[SOURCE GAP] {dataset} {params['time.min']} through {params['time.max']}: {gap.get('message', 'No data available')}")
             return frame
-        frame = pd.read_csv(StringIO(body.decode("utf-8-sig")), header=None)
+        frame = pd.read_csv(StringIO(body.decode("utf-8-sig")), header=None,
+                            float_precision="round_trip")
         if frame.empty or frame.shape[1] != len(selected) + 1:
             raise SourceDataError(f"HAPI {dataset} invalid column count or empty data")
         frame.columns = ["Time"] + selected

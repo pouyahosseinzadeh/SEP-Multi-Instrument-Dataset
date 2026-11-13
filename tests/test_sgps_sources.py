@@ -11,6 +11,8 @@ from sep_dataset.sgps_sources import (
     METHOD, SGPSStore, SGPSSourceError, TARGET_ENERGIES,
     interpolate_energy, read_l1b, read_l2,
 )
+from sep_dataset.enhanced_builder import NATIVE_BANK
+from sep_dataset.proton_calibration import load_calibration_bank
 
 
 ENERGY = np.array([1., 2., 3., 5., 8., 16., 31., 55., 90., 109., 130., 196., 330.])
@@ -262,3 +264,34 @@ def test_metadata_exposes_energy_matching_uncertainty_and_causal_availability(tm
         assert "not quantified" in info["uncertainty"]
     with pytest.raises(KeyError):
         store.metadata("SGPS_P4")
+
+
+def test_native_daily_cache_preserves_spectra_and_omits_proxy_bands(tmp_path, monkeypatch):
+    bank = load_calibration_bank(NATIVE_BANK)
+    source = _l2(tmp_path / "source.nc")
+    calls = []
+
+    def get(url, **kwargs):
+        calls.append(url)
+        if url.endswith("/"):
+            listing = '<title>Index of /NOAA</title>'
+            if "/goes16/l2/" in url:
+                listing += '<a href="sci_sgps-l2-avg5m_g16_d20251201_v3-0-2.nc">data</a>'
+            return _response(200, listing, url)
+        return _response(200, source.read_bytes(), url)
+
+    monkeypatch.setattr(requests, "get", get)
+    cache = tmp_path / "cache"
+    store = SGPSStore(cache, progress=None, calibration_bank=bank)
+    day = store.native_range("2025-12-01", "2025-12-02")
+    assert len(day) == 288
+    assert day.native_flux_0.iloc[0] == pytest.approx(1.0)
+    assert all(c not in day for c in TARGET_ENERGIES)
+    assert day.attrs["source_records"]
+    assert not list(cache.rglob("*.nc"))
+    assert len(list(cache.rglob("*.csv.gz"))) == 1
+    assert not any("/goes17/" in u or "/goes19/" in u or "/goes18/l1b/" in u for u in calls)
+    observed_calls = list(calls)
+    reopened = SGPSStore(cache, progress=None, calibration_bank=bank)
+    pd.testing.assert_frame_equal(reopened.native_range("2025-12-01", "2025-12-02"), day, check_exact=True)
+    assert calls == observed_calls

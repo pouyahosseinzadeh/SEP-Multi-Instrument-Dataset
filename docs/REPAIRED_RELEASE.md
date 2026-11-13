@@ -1,6 +1,12 @@
 # Repaired ten-feature release
 
-## Required existing inputs
+## Fresh acquisition
+
+Use the [README commands](../README.md#start-over-from-fresh-downloads) to create a new native archive from Zenodo, HEK, NASA and NOAA through 2025. This is the preferred workflow when old datasets and caches were removed. It keeps extension source windows unfilled until final quality selection. Proton windows crossing the legacy cutoff are excluded so interpolation cannot bridge an instrument transition. Modern spectra use the validated bank and product priority described below.
+
+Fresh outputs require at least 216 source-supported bins in each 288-bin feature window, with no gap longer than 24 consecutive bins. The same retained identities are used in every file. An excessive gap in any feature excludes that row from all ten and is listed in `exclusions.csv`. Nonempty retained gaps are filled once with within-window interpolation or nearest-edge values. The final gate checks finite feature bins, physical fill codes and per-point provenance. Unreported metadata remain blank and are counted separately in `metadata_availability.csv`.
+
+## Required existing inputs for offline repair
 
 Repair starts from the completed **unfiltered** `data/processed/enhanced_1998_2025` archive. It reads the original ten feature CSVs, their `quality/<feature>_quality.csv` files and manifest, and the modern proton **`continuation_audit/native_sgps_*.csv`** records. The two magnetic CSVs are not required. An already filtered cleaned folder cannot recover previously excluded samples and is not accepted as the source.
 

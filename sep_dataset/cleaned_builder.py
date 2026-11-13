@@ -482,6 +482,12 @@ def validate_cleaned_dataset(dataset_dir, *, allow_verifying=False):
     allowed_reasons = exclusions[empty_columns].any(axis=1) if set(empty_columns).issubset(exclusions) else pd.Series(False, index=exclusions.index)
     if repaired and "flare_identity_excluded" in exclusions:
         allowed_reasons = allowed_reasons | exclusions.flare_identity_excluded.eq(True)
+    gap_limits = repaired and "gap_limits" in manifest["config"]
+    if gap_limits:
+        from .repaired_builder import FRESH_GAP_LIMITS, _insufficient_support
+        if manifest["config"]["gap_limits"] != FRESH_GAP_LIMITS or "excessive_gap_features" not in exclusions:
+            raise ValueError("Fresh release gap policy or exclusion records are invalid")
+        allowed_reasons |= exclusions.excessive_gap_features.fillna("").str.len().gt(0)
     if not set(empty_columns).issubset(exclusions) or (len(exclusions) and not allowed_reasons.all()):
         raise ValueError("Excluded samples lack an entirely unavailable feature reason")
     original_indices = mapping.source_row_index.tolist() + exclusions.source_row_index.tolist()
@@ -526,6 +532,10 @@ def validate_cleaned_dataset(dataset_dir, *, allow_verifying=False):
             raise ValueError(f"Newly filled points lack interpolation/edge provenance: {feature}")
         if not np.array_equal(newly_filled.sum(axis=1), q.cleaning_missing_points_before.to_numpy()):
             raise ValueError(f"Cleaned missing-before/fill counts disagree: {feature}")
+        if gap_limits:
+            too_many, too_long = _insufficient_support(np.where(newly_filled, np.nan, values))
+            if too_many.any() or too_long.any() or not np.isin(final_masks[~newly_filled], ["O", "D", "U"]).all():
+                raise ValueError(f"Fresh release contains excessive gaps or unsupported fill values: {feature}")
         if not np.array_equal((~newly_filled).sum(axis=1), q.cleaning_input_valid_points.to_numpy()):
             raise ValueError(f"Cleaned source anchor counts disagree: {feature}")
         if _mask_hash(values[~newly_filled]) != entry["input_valid_values_sha256"]:

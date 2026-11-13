@@ -128,6 +128,51 @@ def test_conflicting_sep_nsep_flare_is_quarantined_in_all_ten_files(tmp_path, ar
     assert rb.validate_repaired_dataset(output)["feature_files"] == 10
 
 
+def test_fresh_cohort_excludes_long_or_excessive_gaps_and_preserves_threshold_anchors(tmp_path, artifact):
+    source, output = tmp_path / "native", tmp_path / "repaired"
+    fixture_enhanced(source)
+    manifest_path = source / "dataset_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["workflow"] = rb.NATIVE_WORKFLOW
+    manifest["feature_files"] = [entry for entry in manifest["feature_files"] if entry["feature"] in rb.FEATURES]
+    manifest_path.write_text(json.dumps(manifest))
+
+    class FreshAdapter(Adapter):
+        def read_feature(self, entry, metadata_columns, rows):
+            frame, quality = super().read_feature(entry, metadata_columns, rows)
+            feature = entry["feature"]
+            values = np.tile(np.arange(1., 289.), (rows, 1))
+            if feature == "Vx":
+                values *= -1
+            masks = np.full(values.shape, "O", dtype="U1")
+            if feature in ("P4", "P5", "P6"):
+                masks[2:] = "D"
+            if feature == "P6":
+                # 24 leading bins and 48 isolated gaps are exactly permitted.
+                masks[0, np.r_[0:24, 26:122:2]] = "G"
+                quality.loc[0, "historical_raw_missing_points"] = 72
+                masks[1, 40:65] = "G"
+                masks[2, 0:146:2] = "G"
+            frame[columns(feature)] = np.where(masks == "G", -9999.0, values)
+            quality["point_status"] = ["".join(row) for row in masks]
+            return frame, quality
+
+    result = rb.repair_dataset(source, outdir=output, source_adapter=FreshAdapter(source, artifact))
+    assert result["total_rows_per_feature"] == 2
+    assert result["config"]["gap_limits"] == {"max_missing_bins": 72, "max_consecutive_gap_bins": 24}
+    assert rb.validate_repaired_dataset(output)["valid"]
+    exclusions = pd.read_csv(output / "exclusions.csv")
+    assert exclusions.source_row_index.tolist() == [1, 2]
+    assert exclusions.excessive_gap_features.tolist() == ["P6", "P6"]
+    assert exclusions.exclusion_reason.tolist() == ["excessive_gap:P6", "excessive_gap:P6"]
+    assert not exclusions.empty_P6.any()
+    for feature in rb.FEATURES:
+        assert read_quality(output, feature).sample_id.tolist() == ["flare-0", "flare-3"]
+    p6 = read_feature(output, "P6")[columns("P6")].to_numpy()
+    np.testing.assert_array_equal(p6[0, :25], np.repeat(25., 25))
+    np.testing.assert_array_equal(p6[0, 25:], np.arange(26., 289.))
+
+
 def test_same_class_duplicate_has_one_representative_and_preserved_labels(tmp_path, artifact):
     source, output = tmp_path / "enhanced", tmp_path / "repaired"
     fixture_enhanced(source)

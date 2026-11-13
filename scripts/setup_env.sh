@@ -28,4 +28,4 @@ if ! "$SEP_VENV_PATH/bin/python" -m pip --version >/dev/null 2>&1; then
 fi
 "$SEP_VENV_PATH/bin/python" -m pip install --upgrade pip
 "$SEP_VENV_PATH/bin/python" -m pip install -r "$PROJECT_DIR/requirements.txt"
-printf '\nEnvironment ready: %s\nFor the repaired ten-feature release from existing downloads, run: bash scripts/run_repaired_project.sh\n' "$SEP_VENV_PATH"
+printf '\nEnvironment ready: %s\nTo collect a fresh ten-feature release, run: bash scripts/run_fresh_project.sh\n' "$SEP_VENV_PATH"

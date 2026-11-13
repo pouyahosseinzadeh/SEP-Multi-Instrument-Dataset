@@ -1,5 +1,9 @@
 data/cache/
 data/processed/
+data/fresh_1998_2025/
+calibration/historical_raw_masks.json.gz
+calibration/historical_raw_masks.json.manifest.json
+sep-historical-availability.zip
 reports/figures/
 reports/figures_*/
 .venv/

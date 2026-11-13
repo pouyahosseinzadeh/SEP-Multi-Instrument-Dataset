@@ -126,6 +126,20 @@ def test_native_five_minute_predictors_expose_conservative_lookahead(tmp_path):
         assert store.metadata(feature)["bin_lookahead_minutes"] == 5
 
 
+def test_resumed_month_keeps_fresh_observation_precision(tmp_path, monkeypatch):
+    start = pd.Timestamp("2025-01-01T00:00:00Z")
+    stop = start + pd.Timedelta(minutes=5)
+    value = 1.2345678901234567
+    fresh = CompatibleSourceStore(tmp_path, progress=None)
+    data = pd.DataFrame(value, index=pd.DatetimeIndex([start], name="Time"),
+                        columns=["Vx", "flow_speed", "proton_density", "T", "F"])
+    monkeypatch.setattr(fresh, "_hapi", lambda *a, **k: data)
+    initial = fresh.range("F", start, stop)
+    resumed = CompatibleSourceStore(tmp_path, progress=None)
+    monkeypatch.setattr(resumed, "_hapi", lambda *a, **k: pytest.fail("Expected parsed cache"))
+    np.testing.assert_array_equal(resumed.range("F", start, stop), initial)
+
+
 def test_unexpected_download_failure_raises_and_never_caches(tmp_path, monkeypatch):
     calls = []
 

@@ -161,6 +161,30 @@ def test_cross_coverage_window_retains_structural_last_point():
     assert quality.iloc[-1].causality_excluded_points == 0
 
 
+def test_fresh_extension_preserves_gaps_for_final_selection():
+    metadata = _metadata()
+    extension = metadata.iloc[[0]].copy()
+    extension["FlrOnset"] = "2025-01-02 00:03:00"
+
+    class GapStore(FakeStore):
+        def range(self, feature, start, stop):
+            series = super().range(feature, start, stop)
+            series.iloc[5] = np.nan
+            return series
+
+        def quality_range(self, feature, start, stop):
+            result = super().quality_range(feature, start, stop)
+            result.iloc[5, 0] = "missing_measurement"
+            return result
+
+    combined, quality = builder._build_feature("Vx", _baseline("Vx", metadata), extension, GapStore(), raw_extension=True)
+    assert quality.iloc[-1].point_status == "O"*5 + "G" + "O"*281 + "G"
+    assert quality.iloc[-1].missing_points_after == 2
+    assert quality.iloc[-1].median_filled_points == 0
+    assert combined.iloc[-1].Vx_283 == builder.MISSING
+    assert combined.iloc[-1].Vx_1 == builder.MISSING
+
+
 def test_config_retains_inclusive_end_and_rejects_unsupported_dates():
     config = builder._config("2014-01-01", "2025-12-31")
     assert config["end_date_inclusive"] == "2025-12-31"

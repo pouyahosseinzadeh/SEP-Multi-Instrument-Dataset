@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from datetime import datetime, timezone
+import gzip
 import hashlib
 import json
 from pathlib import Path
@@ -154,7 +155,7 @@ def _select(values, sensor):
     return chosen
 
 
-def _map_frame(index, flux, energy, error, valid, advisory, counts, sensor, yaw, product, satellite, energy_basis):
+def _map_frame(index, flux, energy, error, valid, advisory, counts, sensor, yaw, product, satellite, energy_basis, *, derive=True):
     """Keep native fluxes and QC alongside every derived value."""
     frame = {}
     for i in range(flux.shape[1]):
@@ -164,7 +165,7 @@ def _map_frame(index, flux, energy, error, valid, advisory, counts, sensor, yaw,
         frame[f"native_valid_samples_{i}"] = counts[:, i]
         frame[f"native_advisory_fraction_{i}"] = advisory[:, i]
     clean = np.where(valid, flux, np.nan)
-    for feature, target in TARGET_ENERGIES.items():
+    for feature, target in (TARGET_ENERGIES.items() if derive else ()):
         mapped = interpolate_energy(energy, clean, target, error)
         frame[feature] = mapped.pop("value")
         for name, values in mapped.items():
@@ -183,7 +184,7 @@ def _map_frame(index, flux, energy, error, valid, advisory, counts, sensor, yaw,
     return frame
 
 
-def read_l2(path, satellite, min_valid_fraction=0.5):
+def read_l2(path, satellite, min_valid_fraction=0.5, *, derive=True):
     """Read current or older SGPS L2, including reprocessed September 2017."""
     with netCDF4.Dataset(path) as dataset:
         time_name = "time" if "time" in dataset.variables else "L2_SciData_TimeStamp"
@@ -233,7 +234,7 @@ def read_l2(path, satellite, min_valid_fraction=0.5):
                 raise SGPSSourceError(f"Missing SGPS L2 quality field: {name}")
             advisory = np.maximum(advisory, _select(_array(dataset[name]), sensor) / np.maximum(counts, 1))
         product = "NOAA_SGPS_L2_AVG5M"
-        frame = _map_frame(index, flux, energy, error, valid, advisory, counts, sensor, yaw, product, satellite, energy_basis)
+        frame = _map_frame(index, flux, energy, error, valid, advisory, counts, sensor, yaw, product, satellite, energy_basis, derive=derive)
         details = {"level": "L2", "satellite": f"GOES-{satellite}", "native_flux_units": str(variable.units), "native_effective_energy_MeV": energy_all.tolist(), "energy_coordinate_basis": energy_basis, "yaw_policy": yaw_basis, "processing": "native 5-minute temperature-corrected AvgDiffProtonFlux; no temporal imputation"}
         return frame, details
 
@@ -243,7 +244,7 @@ def _labels(variable):
     return [b"".join(row).decode().strip() for row in rows]
 
 
-def read_l1b(path, satellite, min_valid_fraction=0.5):
+def read_l1b(path, satellite, min_valid_fraction=0.5, *, derive=True):
     """Genuine 2020 bridge: average valid native 1-s flux, preserving QC.
 
     L1b lacks the L2 temperature correction and reports nominal energy labels,
@@ -292,14 +293,14 @@ def read_l1b(path, satellite, min_valid_fraction=0.5):
         row_sensor = pd.Series(sensor[keep], index=idx).resample("5min").agg(lambda s: s.iloc[0] if s.nunique() == 1 else -1).to_numpy()
         row_yaw = pd.Series(yaw[keep], index=idx).resample("5min").first().to_numpy()
         good = (count >= 300 * min_valid_fraction) & np.isfinite(averaged.to_numpy()) & (row_sensor >= 0)[:, None]
-        frame = _map_frame(averaged.index, averaged.to_numpy(), np.broadcast_to(energy, averaged.shape), averaged_error, good, advisory, count, row_sensor, row_yaw, "NOAA_SGPS_L1B_VALID_1S_TO_5MIN", satellite, "geometric_mean_of_native_L1b_nominal_label_bounds")
+        frame = _map_frame(averaged.index, averaged.to_numpy(), np.broadcast_to(energy, averaged.shape), averaged_error, good, advisory, count, row_sensor, row_yaw, "NOAA_SGPS_L1B_VALID_1S_TO_5MIN", satellite, "geometric_mean_of_native_L1b_nominal_label_bounds", derive=derive)
         details = {"level": "L1b", "satellite": f"GOES-{satellite}", "native_flux_units": "per keV; converted to per MeV", "nominal_geometric_mean_energy_MeV": energy, "yaw_policy": yaw_basis, "processing": "native valid 1-second measurements averaged in left-labelled 5-minute bins; NO L2 temperature correction", "energy_caveat": "Native L1b labels do not provide versioned calibrated effective energies; nominal label-bound geometric means are used and flagged", "uncertainty_processing": "root-sum-square native 1-second errors / valid sample count, assuming independent samples; correlated systematic uncertainty is not quantified"}
         return frame, details
 
 
 class SGPSStore:
     """Bounded-RAM daily SGPS adapter with atomic raw/parsed/index caches."""
-    def __init__(self, cache_dir="data/cache/sgps", progress=print, *, timeout=120, retries=3, satellites=(16, 18, 19, 17), memory_days=8, min_valid_fraction=0.5):
+    def __init__(self, cache_dir="data/cache/sgps", progress=print, *, timeout=120, retries=3, satellites=(16, 18, 19, 17), memory_days=8, min_valid_fraction=0.5, calibration_bank=None):
         if not satellites or any(s not in (16, 17, 18, 19) for s in satellites):
             raise ValueError("Choose GOES satellites 16, 17, 18 and/or 19")
         if not 0 < min_valid_fraction <= 1:
@@ -308,7 +309,18 @@ class SGPSStore:
         self.satellites, self.memory_days, self.min_valid_fraction = tuple(satellites), max(1, memory_days), min_valid_fraction
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.source_records, self._records, self._index_memory, self._day_memory = [], set(), {}, OrderedDict()
-        config = json.dumps([CACHE_VERSION, self.satellites, self.min_valid_fraction])
+        self._day_sources = {}
+        self.calibration_bank = calibration_bank
+        self.native_modes = {}
+        for artifact in calibration_bank["artifacts"] if calibration_bank is not None else ():
+            key = artifact["applicability"]["source_key"]
+            product = {"NOAA_SGPS_L2_AVG5M": "L2", "NOAA_SGPS_L1B_VALID_1S_TO_5MIN": "L1b"}.get(key["source_product"])
+            if product is not None:
+                self.native_modes.setdefault((key["source_satellite"], product), []).append(artifact)
+        config = [CACHE_VERSION, self.satellites, self.min_valid_fraction]
+        if calibration_bank is not None:
+            config.extend(["native-only-v1", [a["calibration_id"] for a in calibration_bank["artifacts"]]])
+        config = json.dumps(config)
         self._config = hashlib.sha256(config.encode()).hexdigest()[:12]
 
     def metadata(self, feature):
@@ -346,7 +358,11 @@ class SGPSStore:
     def native_range(self, start, stop):
         """Return retained native flux, energy, uncertainty, coverage and flags."""
         frame = self._range(start, stop)
-        return frame[[name for name in frame if name.startswith("native_") or name.startswith("source_") or name in ("yaw_flag", "energy_coordinate_basis")]].copy()
+        result = frame[[name for name in frame if name.startswith("native_") or name.startswith("source_") or name in ("yaw_flag", "energy_coordinate_basis")]].copy()
+        if self.calibration_bank is not None:
+            days = pd.date_range(_utc(start).normalize(), (_utc(stop) - pd.Timedelta(nanoseconds=1)).normalize(), freq="D")
+            result.attrs["source_records"] = [record for day in days for record in self._day_sources[day.strftime("%Y-%m-%d")]]
+        return result
 
     def _range(self, start, stop):
         start, stop = _utc(start), _utc(stop)
@@ -367,7 +383,7 @@ class SGPSStore:
     def _empty(self, day):
         index = _grid(day)
         frame = pd.DataFrame(index=index)
-        for feature in TARGET_ENERGIES:
+        for feature in (TARGET_ENERGIES if self.calibration_bank is None else ()):
             frame[feature] = np.nan
             for field in ("uncertainty", "lower_energy", "upper_energy", "lower_flux", "upper_flux", "weight", "advisory_fraction"):
                 frame[f"{feature}_{field}"] = np.nan
@@ -376,13 +392,28 @@ class SGPSStore:
         frame["yaw_flag"], frame["energy_coordinate_basis"] = np.nan, "unavailable"
         return frame
 
+    def _supported_native(self, candidate, satellite, level):
+        from .proton_calibration import native_spectral_matrix
+        for artifact in self.native_modes.get((f"GOES-{satellite}", level), ()):
+            app = artifact["applicability"]
+            eligible = candidate.source_detector.eq(app["source_key"]["source_detector"])
+            eligible &= candidate.energy_coordinate_basis.isin(app["allowed_energy_bases"])
+            if eligible.any():
+                spectra, _, grid_ok = native_spectral_matrix(candidate.loc[eligible], artifact["reference_grid_MeV"], app["energy_grid_rtol"])
+                required = sorted({i for model in artifact["models"].values() for i in model["required_channels"]})
+                if (grid_ok & np.isfinite(spectra[:, required]).all(axis=1)).any():
+                    return True
+        return False
+
     def _day(self, day):
         key = day.strftime("%Y-%m-%d")
         if key in self._day_memory:
             self._day_memory.move_to_end(key)
             return self._day_memory[key]
-        path = self.cache_dir / "parsed" / self._config / f"{key}.csv"
-        manifest = path.with_suffix(".json")
+        native_only = self.calibration_bank is not None
+        folder = self.cache_dir / "parsed" / self._config
+        path = folder / (f"{key}.csv.gz" if native_only else f"{key}.csv")
+        manifest = folder / f"{key}.json"
         frame = None
         if path.exists() and manifest.exists():
             try:
@@ -396,45 +427,67 @@ class SGPSStore:
                 frame.index = _grid(day)
                 for record in saved["sources"]:
                     self._record(record)
+                self._day_sources[key] = saved["sources"]
             except (OSError, ValueError, KeyError):
                 frame = None
         if frame is None:
             if self.progress:
                 self.progress(f"[SGPS] {key}: locating measured differential flux")
-            records = []
+            records, downloaded = [], []
+            first_native_valid = None
             for satellite, level, url in self._candidates(day):
                 raw_path, sha = self._download_netcdf(url)
-                candidate, details = (read_l2 if level == "L2" else read_l1b)(raw_path, satellite, self.min_valid_fraction)
-                record = {"url": url, "sha256": sha, "method": METHOD, "targets_MeV": TARGET_ENERGIES, "details": details}
+                downloaded.append(raw_path)
+                candidate, details = (read_l2 if level == "L2" else read_l1b)(raw_path, satellite, self.min_valid_fraction, derive=not native_only)
+                record = {"url": url, "sha256": sha, "method": "native_sgps" if native_only else METHOD, "details": details}
+                if not native_only:
+                    record["targets_MeV"] = TARGET_ENERGIES
                 records.append(record)
                 source_valid = candidate.attrs.get("native_valid_points", 0)
                 candidate = candidate[(candidate.index >= day) & (candidate.index < day + pd.Timedelta(days=1))]
                 if source_valid and not candidate.empty:
-                    frame = candidate.reindex(_grid(day))
-                    for feature in TARGET_ENERGIES:
-                        frame[f"{feature}_channel_status"] = frame[f"{feature}_channel_status"].fillna("sgps_missing_native_observation")
-                    for name in ("source_product", "source_satellite", "source_detector", "energy_coordinate_basis"):
-                        frame[name] = frame[name].fillna("missing_native_observation")
+                    if native_only and not self._supported_native(candidate, satellite, level):
+                        record["source_status"] = "no_calibration_compatible_native_bins"
+                        if first_native_valid is None:
+                            first_native_valid = candidate
+                        continue
+                    record["source_status"] = "selected"
+                    frame = candidate
                     break
+            if native_only and frame is None and first_native_valid is not None:
+                frame = first_native_valid
             if frame is None:
                 frame = self._empty(day)
-                records.append({"day": key, "method": METHOD, "source_status": "no_available_native_valid_sgps_product", "reason": "archive index has no daily product or all candidates have invalid native measurements; no synthetic values inserted"})
+                records.append({"day": key, "method": "native_sgps" if native_only else METHOD, "source_status": "no_available_native_valid_sgps_product", "reason": "archive index has no daily product or all candidates have invalid native measurements; no synthetic values inserted"})
+            frame = frame.reindex(_grid(day))
+            for feature in (TARGET_ENERGIES if not native_only else ()):
+                frame[f"{feature}_channel_status"] = frame[f"{feature}_channel_status"].fillna("sgps_missing_native_observation")
+            for name in ("source_product", "source_satellite", "source_detector", "energy_coordinate_basis"):
+                frame[name] = frame[name].fillna("missing_native_observation")
             for record in records:
                 self._record(record)
             content = frame.to_csv(index_label="Time").encode()
+            if native_only:
+                content = gzip.compress(content, mtime=0)
             _atomic_bytes(path, content)
             _json(manifest, {"parsed_sha256": hashlib.sha256(content).hexdigest(), "sources": records, "cache_version": CACHE_VERSION})
+            self._day_sources[key] = records
+            if native_only:
+                for raw_path in set(downloaded):
+                    raw_path.unlink(missing_ok=True)
         self._day_memory[key] = frame
         while len(self._day_memory) > self.memory_days:
             self._day_memory.popitem(last=False)
         return frame
 
     def _candidates(self, day):
-        if day.year == 2017 and day.month == 9 and 16 in self.satellites:
+        if day.year == 2017 and day.month == 9 and 16 in self.satellites and (self.calibration_bank is None or ("GOES-16", "L2") in self.native_modes):
             yield 16, "L2", SPECIAL_2017
             return
         for satellite in self.satellites:
             for level in ("L2", "L1b"):
+                if self.calibration_bank is not None and (f"GOES-{satellite}", level) not in self.native_modes:
+                    continue
                 directory = f"{ARCHIVE}/goes{satellite}/l2/data/sgps-l2-avg5m/{day:%Y/%m}/" if level == "L2" else f"{ARCHIVE}/goes{satellite}/l1b/seis-l1b-sgps/{day:%Y/%m}/"
                 files = self._listing(directory)
                 matches = [url for url in files if f"_g{satellite}_d{day:%Y%m%d}_" in url]
@@ -482,7 +535,8 @@ class SGPSStore:
         raise SGPSSourceError(f"SGPS request failed; not converted into an observation gap: {url}: {error}")
 
     def _download_netcdf(self, url):
-        path = self.cache_dir / "raw" / f"{hashlib.sha256(url.encode()).hexdigest()}.nc"
+        folder = "raw" if self.calibration_bank is None else "pending_raw"
+        path = self.cache_dir / folder / f"{hashlib.sha256(url.encode()).hexdigest()}.nc"
         if not path.exists():
             if self.progress:
                 self.progress(f"[SGPS DOWNLOAD] {url.rsplit('/', 1)[-1]}")

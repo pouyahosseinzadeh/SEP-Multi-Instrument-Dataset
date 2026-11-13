@@ -140,13 +140,15 @@ def _load_extension(outdir: Path, cache: Path, metadata: pd.DataFrame,
 
 
 def _build_feature(feature: str, baseline: pd.DataFrame, extension: pd.DataFrame,
-                   store: CompatibleSourceStore) -> tuple[pd.DataFrame, pd.DataFrame]:
+                   store: CompatibleSourceStore, *, raw_extension: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
     columns = window_columns(feature)
     original = baseline[columns].to_numpy(dtype=float)
     reference = np.where(np.isfinite(original) & (original != MISSING), original, np.nan)
-    medians = pd.DataFrame(reference).median(axis=0).to_numpy(dtype=float)
-    usable = reference[np.isfinite(reference)]
-    medians[~np.isfinite(medians)] = float(np.median(usable)) if len(usable) else np.nan
+    medians = np.full(STEPS, np.nan)
+    if not raw_extension:
+        medians = pd.DataFrame(reference).median(axis=0).to_numpy(dtype=float)
+        usable = reference[np.isfinite(reference)]
+        medians[~np.isfinite(medians)] = float(np.median(usable)) if len(usable) else np.nan
     nold, nnew = len(baseline), len(extension)
     filled, rows = np.full((nnew, STEPS), np.nan), []
     for i in range(nold):
@@ -173,21 +175,34 @@ def _build_feature(feature: str, baseline: pd.DataFrame, extension: pd.DataFrame
         quality = store.quality_range(feature, low, high)
         for i in positions:
             grid = window_index(onsets.iloc[i])
-            raw = series.reindex(grid).to_numpy(dtype=float)
+            raw = series.reindex(grid).to_numpy(dtype=float, copy=True)
             q = quality.reindex(grid)
             if q.channel_status.isna().any():
                 raise RuntimeError(f"Incomplete source coverage metadata for {feature} at {onsets.iloc[i]}")
             structural = q.channel_status.eq("outside_original_channel_coverage").to_numpy()
             causal_excluded = (grid + lookahead > onsets.iloc[i]) & ~structural
             raw[causal_excluded] = np.nan
-            filled[i], counts, point_status = fill_window(raw, structural, medians, return_status=True)
+            if raw_extension:
+                observed = np.isfinite(raw) & (raw != MISSING) & ~structural
+                filled[i, observed] = raw[observed]
+                status = np.full(STEPS, "G")
+                status[observed], status[structural] = "O", "S"
+                point_status = "".join(status)
+                counts = {"observed_points": int(observed.sum()), "interpolated_points": 0,
+                          "edge_filled_points": 0, "median_filled_points": 0,
+                          "structural_missing_points": int(structural.sum()),
+                          "missing_points_after": int((~observed).sum()),
+                          "unavailable_channel": bool(structural.any())}
+            else:
+                filled[i], counts, point_status = fill_window(raw, structural, medians, return_status=True)
             counts.update({"row_index": nold + int(i), "sample_id": f"extension-{i}", "origin": "extension",
                            "causality_excluded_points": int(causal_excluded.sum()),
                            "point_status": point_status,
                            "causality_mask": "".join(np.where(causal_excluded, "1", "0")),
                            "source_era": " | ".join(sorted(q.source_product.astype(str).unique())),
                            "source_satellites": " | ".join(sorted(q.source_satellite.astype(str).unique())),
-                           "source_method": "raw_native; causal_guard; linear_inside; nearest_edge; frozen_historical_median_fallback"})
+                           "source_method": "raw_native; causal_guard; no_gap_filling" if raw_extension else
+                           "raw_native; causal_guard; linear_inside; nearest_edge; frozen_historical_median_fallback"})
             rows.append(counts)
     new = pd.concat([extension.reset_index(drop=True), pd.DataFrame(np.where(np.isfinite(filled), filled, MISSING), columns=columns)], axis=1)
     return pd.concat([baseline, new], ignore_index=True), pd.DataFrame(rows).sort_values("row_index").reset_index(drop=True)
@@ -217,13 +232,25 @@ def _feature_sources(records: list[dict], feature: str) -> list[dict]:
 def build_compatible_dataset(*, end_date: str = "2025-12-31", extension_start: str = "2014-01-01",
                              outdir: str | Path = "data/processed/compatible_1998_2025",
                              cache_dir: str | Path = "data/cache/compatible",
-                             baseline_dir: str | Path | None = None) -> dict:
+                             baseline_dir: str | Path | None = None,
+                             raw_extension: bool = False) -> dict:
     config = _config(extension_start, end_date)
+    if raw_extension:
+        config["extension_values"] = "causal_observations_without_gap_filling_v1"
     outdir, cache = Path(outdir), Path(cache_dir)
     outdir.mkdir(parents=True, exist_ok=True)
     config_path = outdir / "build_config.json"
     if config_path.exists() and json.loads(config_path.read_text()) != config:
         raise ValueError("Output directory belongs to a different build; choose a separate --outdir")
+    existing_manifest = outdir / "dataset_manifest.json"
+    if raw_extension and existing_manifest.exists() and _status_path_is_complete(outdir):
+        try:
+            validate_dataset(outdir)
+        except (ValueError, OSError, AssertionError, KeyError):
+            pass
+        else:
+            print("[RESUME] Completed original-ten acquisition verified", flush=True)
+            return json.loads(existing_manifest.read_text())
     _atomic_json(config_path, config)
     status_path = outdir / "build_status.json"
     _atomic_json(status_path, {"state": "running", "config": config})
@@ -247,7 +274,10 @@ def build_compatible_dataset(*, end_date: str = "2025-12-31", extension_start: s
                 print(f"[RESUME] Verified completed {feature}", flush=True)
                 quality, record = pd.read_csv(quality_path), saved["record"]
             else:
-                combined, quality = _build_feature(feature, baseline, extension, store)
+                if raw_extension:
+                    combined, quality = _build_feature(feature, baseline, extension, store, raw_extension=True)
+                else:
+                    combined, quality = _build_feature(feature, baseline, extension, store)
                 _atomic_csv(target, combined)
                 del combined
                 restored = pd.read_csv(target, float_precision="round_trip", low_memory=False)
@@ -302,6 +332,7 @@ def build_compatible_dataset(*, end_date: str = "2025-12-31", extension_start: s
                   "P4/P5/P6 after 2020-03-04 23:55 UTC are unavailable. They remain -9999, including in _filled.csv files; no replacement bands or median fill.",
                   f"Unavailable channel windows: {len(unavailable)} across the ten files (unavailable_channels.csv).",
                   "Historical metadata and all 288 historical values passed exact numerical/string round-trip checks.",
+                  "Extension windows store source observations and explicit gaps until final processing." if raw_extension else
                   "New gap filling: interior linear interpolation; nearest observed edges; frozen historical medians only for wholly missing covered segments. Quality masks record each operation.",
                   "Historical prefill quality cannot be reconstructed from published filled files.",
                   "Unreported original metadata stays missing; legacy fluence units are not guessed (unavailable_metadata.csv).",
@@ -314,6 +345,11 @@ def build_compatible_dataset(*, end_date: str = "2025-12-31", extension_start: s
         state = "interrupted" if isinstance(exc, (KeyboardInterrupt, SystemExit)) else "failed"
         _atomic_json(status_path, {"state": state, "error": f"{type(exc).__name__}: {exc}", "config": config})
         raise
+
+
+def _status_path_is_complete(root):
+    path = root / "build_status.json"
+    return path.is_file() and json.loads(path.read_text()).get("state") in ("complete", "complete_with_reported_unavailability")
 
 
 def validate_dataset(dataset_dir: str | Path) -> dict:

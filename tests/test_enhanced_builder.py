@@ -146,3 +146,49 @@ def test_missing_source_audit_is_rejected_then_repaired_on_resume(tmp_path):
     eb.enhance_dataset(root,**kwargs)
     assert sgps.calls>calls and audit.exists()
     assert eb.validate_enhanced_dataset(output)['valid']
+
+
+def test_native_ten_collects_only_window_days_and_resumes_unchanged(tmp_path):
+    root, output = tmp_path / "legacy", tmp_path / "native"
+    _, entries = fixture_legacy(root)
+
+    class NativeOnly:
+        def __init__(self):
+            self.days = []
+
+        def native_range(self, start, stop):
+            self.days.append(start.strftime("%Y-%m-%d"))
+            index = pd.date_range(start, stop, freq="5min", inclusive="left")
+            return pd.DataFrame({"source_satellite": "GOES-16", "source_product": "NOAA_SGPS_L2_AVG5M",
+                                 "source_detector": "SGPS-X physical west", "energy_coordinate_basis": "test",
+                                 "native_flux_0": 0.01}, index=index)
+
+    store = NativeOnly()
+    kwargs = {"outdir": output, "sgps_store": store, "verify_legacy": False, "native_ten_only": True}
+    result = eb.enhance_dataset(root, **kwargs)
+    assert result["workflow"] == eb.NATIVE_WORKFLOW
+    assert [entry["feature"] for entry in result["feature_files"]] == list(eb.LEGACY_FEATURES)
+    assert store.days == ["2025-01-01", "2025-01-02"]
+    for entry in entries:
+        assert file_sha256(output / entry["filename"]) == entry["sha256"]
+    audit = output / "continuation_audit" / "native_sgps_2025-01.csv.gz"
+    assert len(pd.read_csv(audit)) == 576
+    assert eb.validate_enhanced_dataset(output)["feature_files"] == 10
+    before = file_sha256(output / "dataset_manifest.json")
+    eb.enhance_dataset(root, **kwargs)
+    assert store.days == ["2025-01-01", "2025-01-02"]
+    assert file_sha256(output / "dataset_manifest.json") == before
+    audit.unlink()
+    with pytest.raises(ValueError, match="source audit"):
+        eb.validate_enhanced_dataset(output)
+    eb.enhance_dataset(root, **kwargs)
+    assert store.days == ["2025-01-01", "2025-01-02"] * 2
+    assert eb.validate_enhanced_dataset(output)["valid"]
+
+
+def test_native_window_dates_skip_months_without_modern_predictor_bins():
+    metadata = pd.DataFrame({"FlrOnset": ["2020-03-04T23:59:59Z", "2020-03-05T00:00:00Z",
+                                         "2025-02-01T00:00:00Z", "2025-02-13T01:00:00Z"]})
+    assert [(month, [d.strftime("%Y-%m-%d") for d in days]) for month, days in eb._native_windows(metadata)] == [
+        ("2025-02", ["2025-01-31", "2025-02-12", "2025-02-13"])
+    ]

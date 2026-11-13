@@ -17,13 +17,26 @@ import pandas as pd
 
 from . import cleaned_builder as cb
 from .compatible_builder import _atomic_csv, _atomic_json, file_sha256
-from .enhanced_builder import feature_columns
+from .enhanced_builder import NATIVE_WORKFLOW, feature_columns
 from .flare_integrity import IDENTITY_VERSION, audit_flare_identities, assert_flare_label_integrity
 
 
 WORKFLOW = "repaired_ten_feature_release_v2"
 FEATURES = tuple(cb.TEN_FEATURES)
 VERSION = "raw-provenance-and-validated-protons-v2"
+# Preserve reasonable support for interpolated windows in a fresh release.
+# At least 18 of 24 hours must have anchors, and any one gap is at most 2 h.
+MAX_MISSING_BINS = 72
+MAX_CONSECUTIVE_GAP_BINS = 24
+FRESH_GAP_LIMITS = {"max_missing_bins": MAX_MISSING_BINS, "max_consecutive_gap_bins": MAX_CONSECUTIVE_GAP_BINS}
+
+
+def _insufficient_support(values):
+    valid = np.isfinite(values)
+    bins = np.arange(1, values.shape[1] + 1)
+    last_valid = np.maximum.accumulate(np.where(valid, bins, 0), axis=1)
+    longest_gap = (bins - last_valid).max(axis=1)
+    return (~valid).sum(axis=1) > MAX_MISSING_BINS, longest_gap > MAX_CONSECUTIVE_GAP_BINS
 
 
 def _json_list(value, field):
@@ -84,9 +97,12 @@ def repair_dataset(dataset_dir="data/processed/enhanced_1998_2025", *,
     if root.resolve() == output.resolve():
         raise ValueError("Repair output must be separate from the unfiltered enhanced archive")
     manifest_path = root / "dataset_manifest.json"
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"Missing acquisition manifest {manifest_path}. Complete collection before running repair.")
     original = json.loads(manifest_path.read_text())
-    if original.get("workflow") != "enhanced_twelve_feature_research_release":
-        raise ValueError("Repair requires the unfiltered enhanced archive, not an already filtered cleaned release")
+    fresh = original.get("workflow") == NATIVE_WORKFLOW
+    if not fresh and original.get("workflow") != "enhanced_twelve_feature_research_release":
+        raise ValueError("Repair requires the unfiltered native acquisition or enhanced archive.")
     source_entries = original.get("feature_files", [])
     by_feature = {entry.get("feature"): entry for entry in source_entries}
     if len(by_feature) != len(source_entries) or any(f not in by_feature for f in FEATURES):
@@ -121,25 +137,33 @@ def repair_dataset(dataset_dir="data/processed/enhanced_1998_2025", *,
     if source_adapter is None:
         from .repair_sources import RepairAdapter
         source_adapter = RepairAdapter(root, original, calibration_bank=calibration_bank, historical_masks=historical_masks)
-    empty_by_feature, invalid_counts, fill_counts, adapted_hashes = {}, {}, {}, {}
+    empty_by_feature, high_gap_by_feature, long_gap_by_feature, invalid_counts, fill_counts, adapted_hashes = {}, {}, {}, {}, {}, {}
     for entry in entries:
         feature = entry["feature"]
         print("[REPAIR SCAN] {}: {} source rows".format(feature, rows), flush=True)
         frame, q, values, source_fill = _adapter_frame(source_adapter, entry, columns, rows, metadata, ids)
         empty_by_feature[feature] = ~np.isfinite(values).any(axis=1)
+        if fresh:
+            too_many, too_long = _insufficient_support(values)
+            high_gap_by_feature[feature] = too_many & ~empty_by_feature[feature]
+            long_gap_by_feature[feature] = too_long & ~empty_by_feature[feature]
         invalid_counts[feature], fill_counts[feature] = int((~np.isfinite(values)).sum()), int(source_fill.sum())
         adapted_hashes[feature] = {"valid_values": cb._mask_hash(values[np.isfinite(values)]),
                                    "point_status": hashlib.sha256(q.point_status.str.cat().encode()).hexdigest()}
         del frame, q, values, source_fill
     empty = np.logical_or.reduce(list(empty_by_feature.values()))
+    sparse = np.logical_or.reduce(list(high_gap_by_feature.values()) + list(long_gap_by_feature.values())) if fresh else np.zeros(rows, dtype=bool)
     flare_keep = np.asarray(identity["keep"], dtype=bool)
-    keep, retained = flare_keep & ~empty, int((flare_keep & ~empty).sum())
+    keep = flare_keep & ~empty & ~sparse
+    retained = int(keep.sum())
     config = {"version": VERSION, "features": list(FEATURES), "source_manifest_sha256": file_sha256(manifest_path),
               "input_files": input_hashes, "input_quality_files": quality_hashes,
               "source_adapter": json.loads(json.dumps(source_adapter.config, sort_keys=True)),
               "adapted_source_fingerprints": adapted_hashes,
               "identity_policy": IDENTITY_VERSION, "cohort_policy": "Original ten only; remove wholly unavailable rows, whole-row median fallbacks, conflicting flare identities and duplicate physical flares globally",
               "fill_policy": "Linear within-row interpolation; nearest valid edges; no cross-row or label-based filling"}
+    if fresh:
+        config["gap_limits"] = FRESH_GAP_LIMITS
     output.mkdir(parents=True, exist_ok=True)
     config_path, state_path = output / "build_config.json", output / "build_status.json"
     if config_path.exists() and json.loads(config_path.read_text()) != config:
@@ -161,7 +185,18 @@ def repair_dataset(dataset_dir="data/processed/enhanced_1998_2025", *,
         source_reasons = identity["audit"].set_index("source_row_position").exclusion_reason
         excluded["flare_identity_excluded"] = ~flare_keep[~keep]
         excluded["empty_features"] = [" | ".join(f for f in FEATURES if empty_by_feature[f][i]) for i in np.flatnonzero(~keep)]
-        excluded["exclusion_reason"] = ["; ".join(x for x in ("flare_identity:" + str(source_reasons.loc[i]) if not flare_keep[i] else "", "wholly_unavailable:" + "|".join(f for f in FEATURES if empty_by_feature[f][i]) if empty[i] else "") if x) for i in np.flatnonzero(~keep)]
+        excluded["excessive_gap_features"] = [
+            " | ".join(f for f in FEATURES if high_gap_by_feature[f][i] or long_gap_by_feature[f][i]) if fresh else ""
+            for i in np.flatnonzero(~keep)
+        ]
+        excluded["exclusion_reason"] = [
+            "; ".join(reason for reason in (
+                "flare_identity:" + str(source_reasons.loc[i]) if not flare_keep[i] else "",
+                "wholly_unavailable:" + unavailable.replace(" | ", "|") if unavailable else "",
+                "excessive_gap:" + gaps.replace(" | ", "|") if gaps else "",
+            ) if reason)
+            for i, unavailable, gaps in zip(excluded.index, excluded.empty_features, excluded.excessive_gap_features)
+        ]
         for feature in FEATURES:
             excluded["empty_" + feature] = empty_by_feature[feature][~keep]
         _atomic_csv(output / "exclusions.csv", excluded)
@@ -179,7 +214,9 @@ def repair_dataset(dataset_dir="data/processed/enhanced_1998_2025", *,
         historical_report = _report_payload(source_adapter, "historical_mask_report")
         _atomic_json(output / "proton_calibration_report.json", report)
         _atomic_json(output / "historical_mask_report.json", historical_report)
-        audit_names = ["exclusions.csv", "row_mapping.csv", "cohort_counts.csv", "flare_identity_audit.csv", "flare_identity_summary.json", "proton_calibration_report.json", "historical_mask_report.json"]
+        metadata_missing = metadata.loc[keep, columns].isna().sum()
+        _atomic_csv(output / "metadata_availability.csv", metadata_missing.rename_axis("column").reset_index(name="missing_values"))
+        audit_names = ["exclusions.csv", "row_mapping.csv", "cohort_counts.csv", "flare_identity_audit.csv", "flare_identity_summary.json", "proton_calibration_report.json", "historical_mask_report.json", "metadata_availability.csv"]
         if hasattr(source_adapter, "write_audits"):
             for name in source_adapter.write_audits(output):
                 name = str(name)
@@ -264,6 +301,9 @@ def repair_dataset(dataset_dir="data/processed/enhanced_1998_2025", *,
                            "empty_feature_rows": {f: int(empty_by_feature[f].sum()) for f in FEATURES},
                            "identity_summary": identity["summary"], "policy": config["fill_policy"],
                            "limitations": "Filled cells are imputations; supported modern proton values are validated legacy-equivalent estimates within their recorded calibration domain, not native legacy measurements."}
+        if fresh:
+            cleaning_report["gap_limits"] = config["gap_limits"]
+            cleaning_report["excessive_gap_rows"] = {f: int((high_gap_by_feature[f] | long_gap_by_feature[f]).sum()) for f in FEATURES}
         _atomic_json(output / "cleaning_report.json", cleaning_report)
         text = ["Repaired ten-feature analysis release", "Source samples: {}; retained: {}; excluded: {}.".format(rows, retained, rows-retained),
                 "Retained SEP: {}; NSEP: {}.".format(cleaning_report["class_counts_after"]["SEP"], cleaning_report["class_counts_after"]["NSEP"]),
@@ -271,6 +311,8 @@ def repair_dataset(dataset_dir="data/processed/enhanced_1998_2025", *,
                 "Historical raw missingness is restored before selection. Modern proton values require a passed source-specific calibration; unsupported source rows are excluded.",
                 "The same physical flare cannot occur in both SEP and NSEP. See flare_identity_audit.csv and exclusions.csv.",
                 cleaning_report["limitations"]]
+        if fresh:
+            text.append(f"Each retained feature window has at most {MAX_MISSING_BINS} filled bins and no run of more than {MAX_CONSECUTIVE_GAP_BINS} consecutive filled bins.")
         (output / "availability_report.txt").write_text("\n".join(text) + "\n")
         audit_names += ["quality_summary.csv", "feature_cleaning_summary.csv", "cleaning_report.json", "availability_report.txt"]
         manifest = {"workflow": WORKFLOW, "status": "pending_validation", "created_utc": datetime.now(timezone.utc).isoformat(),

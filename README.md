@@ -1,29 +1,39 @@
 # SEP dataset: repaired ten-feature release and model evaluation
 
-This workflow reuses the completed archive, restores historical raw missingness, applies only validated source-specific proton response estimates, and removes duplicate or conflicting physical-flare identities. It produces the original ten feature files, paper figures, and separate Random Forest and Time Series Forest evaluations for each feature.
+The project collects the original ten feature datasets through December 2025, validates their common SEP/NSEP cohort, and generates paper figures and univariate model results.
 
-## Update the code and reuse your existing data
+## Start over from fresh downloads
 
-Download the [latest project ZIP](https://github.com/pouyahosseinzadeh/SEP-Multi-Instrument-Dataset/archive/refs/heads/main.zip). Replace `sep_dataset/`, `scripts/`, `calibration/`, `requirements.txt` and `requirements-benchmark.txt` with the updated versions. Keep your existing **`data/` and `.venv/`** folders. Copy your separately supplied `sep-historical-availability.zip` to the server project folder and extract it there. It adds two historical availability files under `calibration/`.
-
-The input is **`data/processed/enhanced_1998_2025/`**, the completed unfiltered archive. Keep its ten original feature CSVs, `quality/` sidecars, dataset manifest and **`continuation_audit/native_sgps_*.csv`** files. The two magnetic feature CSVs are not required. Older filtered cleaned folders cannot restore excluded samples or replace the native proton audits.
-
-From your server project folder, run:
+1. Download the [current project ZIP](https://github.com/pouyahosseinzadeh/SEP-Multi-Instrument-Dataset/archive/refs/heads/main.zip). Copy the updated `sep_dataset/`, `scripts/`, `calibration/`, and both requirements files into your existing server project.
+2. Copy `sep-historical-availability.zip` into that project folder. It provides the original 1998–2013 missingness and observed-value fingerprints. Keep this ZIP and any original unfilled CSVs. If you have the original unfilled CSVs, you can regenerate the bundle locally with `.venv/bin/python scripts/build_historical_masks.py --raw-dir /path/to/originals`.
+3. From the project folder, run:
 
 ```bash
 cd ~/Pouya/Projects/SEP_DATASET_Paper/SEP-Multi-Instrument-Dataset
-
+unzip -o sep-historical-availability.zip
+df -h .
 bash scripts/setup_env.sh
-bash scripts/run_repaired_project.sh --n-jobs 4
+bash scripts/run_fresh_project.sh
 ```
 
-Setup installs dependencies inside `.venv`, including the reference sktime Time Series Forest implementation. The runner performs **repair → validation → figures and models**, stopping at the first failed step. It does not repeat the bulk dataset collection. Packed historical availability masks recover the original missing-value locations without downloading the historical feature files again.
+Fresh source downloads and checkpoints are in `data/fresh_1998_2025/`. The runner uses this directory independently of earlier `data/cache/` and `data/processed/` releases. You can remove those older generated outputs to reclaim space after saving any files you need. Repeat the same command to resume interrupted downloads and collection. To use a larger mounted disk, pass absolute paths via `--work-dir` and `--outdir`.
 
-Final datasets are written to **`data/processed/repaired_ten_1998_2025/`**. Figures and model results are written under **`reports/figures_repaired_ten_1998_2025/`**. Source files and older outputs remain separate. The retained sample count is determined at runtime; do not reuse an earlier release's count.
+The 1998–2013 published data are downloaded and verified against Zenodo checksums. The extension collects source observations and flare labels for 2014–2025. The collector archives the native modern proton spectra needed for calibration. It collects no magnetic-region datasets. The ten validated submission CSVs and their provenance are in `data/processed/recollected_ten_1998_2025/`.
 
-## Run the stages separately
+After collection finishes, run the figures and models:
 
-Run these commands in order, continuing after each succeeds:
+```bash
+.venv/bin/python -u -m sep_dataset.cli plot \
+  --dataset-dir data/processed/recollected_ten_1998_2025 \
+  --outdir reports/figures_recollected_ten_1998_2025 \
+  --with-models --n-jobs 4
+```
+
+Logs from collection and validation are in `logs/fresh_*.log`. The figures include a yearly P4/P5/P6 distribution and coverage table, `paper/proton_flux_by_year.csv`, and a matching PDF. The held-out metrics and compact plots are under `models/`.
+
+## Reuse an existing archive
+
+For an earlier completed unfiltered enhanced archive, the following offline workflow remains available. Keep its ten original CSVs, manifest, quality sidecars, and native proton audits. The current fresh release uses stricter interpolation limits.
 
 ```bash
 .venv/bin/python -u -m sep_dataset.cli repair \
@@ -54,7 +64,7 @@ Matching input/configuration hashes allow completed feature outputs and model-pr
 
 The ten features are **Vx, flow_speed, proton_density, T, F, Xs, Xl, P4, P5 and P6**. USFLUXL and R_VALUE do not participate in selection, figures or models. Each feature file retains **52 metadata columns plus 288 five-minute pre-flare values**, from `<feature>_288` to `<feature>_1`. `event_type` is `0` for NSEP and `1` for SEP.
 
-Historical originally missing cells are restored before interpolation. A row with no valid anchors in any selected feature is excluded from all ten files, including inherited wholly filled templates whose raw rows were unavailable. Partial observational gaps receive interpolation within their own row and nearest-value edge extension, with `I`/`E` flags. Existing valid anchors and retained labels are preserved. Entirely median-filled source rows are unavailable unless the source adapter replaces them with supported observations.
+Historical originally missing cells are restored before interpolation. A row with no valid anchors in any selected feature is excluded from all ten files, including inherited wholly filled templates whose raw rows were unavailable. Partial observational gaps receive interpolation within their own row and nearest-value edge extension, with `I`/`E` flags. The fresh release keeps at least 216 of 288 source-supported points per feature and excludes any row with more than 24 consecutive unavailable bins. At most six hours of bins in total and two consecutive hours can be filled. Valid zeros are retained. All 288 feature values must be finite and free of missing-value codes. Unreported metadata stays blank and is counted in `metadata_availability.csv`. Existing valid anchors and retained labels are preserved. Entirely median-filled source rows are unavailable unless the source adapter replaces them with supported observations.
 
 After the March 2020 transition, P4/P5/P6 are recomputed from native SGPS spectra using **passed, source-specific legacy-instrument-equivalent response estimates**. The reference is the original GOES-15 W-labelled **uncorrected** channel response, including its background. These are estimated continuations of that instrument quantity; they are not native EPEAD measurements or proof of uniform physical calibration across every instrument/year.
 
