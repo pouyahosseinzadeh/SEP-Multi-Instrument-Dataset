@@ -22,7 +22,9 @@ FEATURES = ("Vx", "flow_speed", "proton_density", "T", "F", "Xs", "Xl", "P4", "P
 MODELS = ("RandomForest", "TimeSeriesForest")
 DISPLAY_MODELS = {"RandomForest": "Random Forest", "TimeSeriesForest": "Time Series Forest"}
 ALLOWED_WORKFLOWS = ("repaired_ten_feature_release_v2",)
-VERSION = "univariate-purged-chronological-v1"
+VERSION = "univariate-purged-chronological-v2"
+PARTITIONS = ("train", "validation", "test")
+LABEL_POLICY = "All release rows with binary event_type labels enter the split audit. SEP is event_type == 1. No proton energy or peak-flux cutoff is applied."
 SUMMARY_METRICS = ("TSS", "HSS", "F1", "Precision", "Recall", "ROC_AUC", "AveragePrecision", "BalancedAccuracy")
 METRIC_LABELS = ("TSS", "HSS", "F1", "Precision", "Recall", "ROC AUC", "AP", "Balanced acc.")
 
@@ -183,7 +185,7 @@ def chronological_splits(metadata, sample_ids=None, canonical_ids=None, *,
     result = pd.DataFrame({"dataset_row_index": np.arange(n), "sample_id": ids.to_numpy(),
                            "canonical_flare_id": canonical.to_numpy(), "FlrOnset": dates.astype(str).to_numpy(),
                            "event_type": labels.to_numpy(dtype=int), "episode_group": episodes,
-                           "split": split, "exclusion_reason": reason,
+                           "calendar_partition": initial, "split": split, "exclusion_reason": reason,
                            "calibration_embargo": calibration_embargo,
                            "calibration_overlap_dates": [" | ".join(sorted(days)) for days in overlap_dates]})
     for earlier, later in (("train", "validation"), ("validation", "test"), ("train", "test")):
@@ -414,20 +416,55 @@ def plot_benchmark_results(metrics, predictions, features, outdir):
         _save_plot(fig, outdir / ("univariate_" + kind.lower()), plt)
 
 
-def _write_analysis(metrics, splits, outdir, calibration_dates=()):
-    counts = splits.groupby(["split", "event_type"]).size().unstack(fill_value=0)
-    lines = ["# Univariate chronological model evaluation", "", "Each model uses one feature's 288 pre-flare samples. The same saved split is used for every case.", "", "| Partition | NSEP | SEP |", "|---|---:|---:|"]
-    for split in ("train", "validation", "test", "purged"):
-        lines.append("| {} | {} | {} |".format(split, int(counts.loc[split].get(0, 0)) if split in counts.index else 0, int(counts.loc[split].get(1, 0)) if split in counts.index else 0))
+def _partition_counts(splits):
+    rows = []
+    for partition in (*PARTITIONS, "all"):
+        group = splits if partition == "all" else splits[splits.calendar_partition.eq(partition)]
+        purged = group.split.eq("purged")
+        row = {"partition": partition}
+        for label, name in ((0, "NSEP"), (1, "SEP")):
+            selected = group.event_type.eq(label)
+            row["input_" + name] = int(selected.sum())
+            row["used_" + name] = int((selected & ~purged).sum())
+            row["purged_" + name] = int((selected & purged).sum())
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _exclusion_counts(splits):
+    purged = splits[splits.split.eq("purged")]
+    keys = ["calendar_partition", "exclusion_reason"]
+    if purged.empty:
+        return pd.DataFrame(columns=[*keys, "NSEP", "SEP"])
+    return (purged.groupby([*keys, "event_type"], observed=True).size().unstack(fill_value=0)
+            .reindex(columns=[0, 1], fill_value=0)
+            .rename(columns={0: "NSEP", 1: "SEP"}).reset_index())
+
+
+def _write_analysis(metrics, splits, counts, exclusions, outdir, calibration_dates=()):
+    lines = ["# Univariate chronological model evaluation", "",
+             "Each model uses one feature's 288 pre-flare samples. The same saved split is used for every case.", "",
+             LABEL_POLICY, "",
+             "| Calendar partition | NSEP candidates | SEP candidates | NSEP used | SEP used | NSEP purged | SEP purged |",
+             "|---|---:|---:|---:|---:|---:|---:|"]
+    for row in counts.itertuples(index=False):
+        lines.append(f"| {row.partition} | {row.input_NSEP} | {row.input_SEP} | {row.used_NSEP} | {row.used_SEP} | {row.purged_NSEP} | {row.purged_SEP} |")
+    total = counts.iloc[-1]
+    test = counts[counts.partition.eq("test")].iloc[0]
+    lines += ["", f"The headline test scores use {test.used_SEP} held-out SEP samples. The dataset contains {total.input_SEP} SEP samples across all calendar partitions, including {total.purged_SEP} excluded from model evaluation."]
+    if not exclusions.empty:
+        lines += ["", "| Calendar partition | Exclusion reason | NSEP | SEP |", "|---|---|---:|---:|"]
+        for row in exclusions.itertuples(index=False):
+            lines.append(f"| {row.calendar_partition} | `{row.exclusion_reason}` | {row.NSEP} | {row.SEP} |")
     lines += ["", "Thresholds maximize validation TSS. Test labels do not choose thresholds, models or feature transforms. Fixed-0.5 results are supplied separately.", "",
               "Calibration-development embargo: {} observation days; {} flare windows/known-episode members excluded. Input/label intervals touching fitting or held-out instrument-calibration days cannot enter classifier training, validation or testing. See calibration_embargo.csv.".format(len(calibration_dates), int(splits.calibration_embargo.sum())), ""]
     for model in MODELS:
         data = metrics[metrics.model.eq(model)].dropna(subset=["TSS"]).sort_values(["TSS", "ROC_AUC"], ascending=False)
         lines.append("{}: {}".format(DISPLAY_MODELS[model], "; ".join("{} TSS={:.3f}, HSS={:.3f}, F1={:.3f}, ROC AUC={:.3f}".format(r.feature, r.TSS, r.HSS, r.F1, r.ROC_AUC) for r in data.head(3).itertuples()) if len(data) else "No defined test TSS; inspect class counts and status columns."))
         lines.append("")
-    test = splits[splits.split.eq("test")]
-    base = float(test.event_type.mean()) if len(test) else np.nan
-    lines += ["The test SEP prevalence is {:.4f}; this is the reference average precision for an uninformative ranking. ROC AUC=0.5, TSS=0 and HSS=0 are useful no-skill references. Accuracy alone is misleading in this imbalanced cohort.".format(base), "", "These scores assess discrimination on the stated held-out cohort. They do not validate instrument calibration, prove independent SEP episodes, or guarantee performance in another source era. Windows within each partition can still overlap; no independent-observation confidence intervals are claimed. Consult provenance counts and the dataset's measurement-validation reports.", "", "This is retrospective evaluation of reprocessed measurements, not a strict as-of-time operational forecast replay. An instrument bridge fitted using 2024/2025 observations may postdate earlier test inputs. Embargoing calibration observations does not recreate the calibration information available at each historical forecast date.", "", "Random Forest uses balanced class weights. The reference sktime Time Series Forest uses its documented unweighted tree fitting. No test resampling is performed. Undefined metrics are left unavailable with reasons in the CSV files."]
+    test_rows = splits[splits.split.eq("test")]
+    base = float(test_rows.event_type.mean()) if len(test_rows) else np.nan
+    lines += ["The test SEP prevalence is {:.4f}; this is the reference average precision for an uninformative ranking. ROC AUC=0.5, TSS=0 and HSS=0 are useful no-skill references. Accuracy alone is misleading in this imbalanced cohort.".format(base), "", "The benchmark checks for cross-class temporal overlap before model fitting. Same-class windows within each partition can still overlap. These retrospective scores assess discrimination on the stated held-out cohort. Consult the provenance counts and measurement-validation reports for instrument calibration and source-era coverage.", "", "Response bridges fitted using 2024/2025 observations may postdate earlier test inputs. Embargoing calibration observations prevents those observations from entering the classifier evaluation. Operational forecasting would need to use only information available at each forecast date.", "", "Random Forest uses balanced class weights. The reference sktime Time Series Forest uses its documented unweighted tree fitting. Test prevalence is preserved. Undefined metrics are left unavailable with reasons in the CSV files."]
     (outdir / "evaluation_summary.md").write_text("\n".join(lines) + "\n")
 
 
@@ -440,20 +477,25 @@ def run_benchmarks(dataset_dir, outdir, *, train_end="2014-12-31", validation_en
         raise ValueError("Choose distinct original features")
     if n_estimators < 1 or n_jobs == 0:
         raise ValueError("Estimator count must be positive and n_jobs cannot be zero")
-    factories = _estimators(n_estimators, n_jobs, random_state)
     manifest, metadata, ids, canonical, paths, eras, hashes = _load_inputs(root, features)
+    from .temporal_overlap import assert_no_temporal_overlap
+    assert_no_temporal_overlap(metadata)
     calibration_dates, bank_hash = _calibration_observation_days(root, manifest)
     splits = chronological_splits(metadata, ids, canonical, train_end=train_end, validation_end=validation_end, purge_hours=purge_hours, calibration_dates=calibration_dates)
     outdir.mkdir(parents=True, exist_ok=True)
     _csv(outdir / "splits.csv", splits)
     _csv(outdir / "calibration_embargo.csv", splits[splits.calibration_embargo].copy())
-    split_indices = {name: np.flatnonzero(splits.split.eq(name).to_numpy()) for name in ("train", "validation", "test")}
+    counts, exclusions = _partition_counts(splits), _exclusion_counts(splits)
+    _csv(outdir / "split_counts.csv", counts)
+    _csv(outdir / "split_exclusion_counts.csv", exclusions)
+    split_indices = {name: np.flatnonzero(splits.split.eq(name).to_numpy()) for name in PARTITIONS}
     labels = metadata.event_type.to_numpy(dtype=int)
     if any(not len(split_indices[name]) for name in split_indices):
         raise ValueError("Every chronological partition must contain samples; inspect splits.csv and choose appropriate date boundaries")
     for name, idx in split_indices.items():
         if len(np.unique(labels[idx])) != 2:
             raise ValueError("{} requires both SEP and NSEP after timing/episode/calibration embargoes; inspect splits.csv. No model is fitted and no score or threshold is fabricated. Any revised split protocol must be specified before evaluating test predictions.".format(name))
+    factories = _estimators(n_estimators, n_jobs, random_state)
     config = {"version": VERSION, "features": features, "train_end": train_end, "validation_end": validation_end,
               "purge_hours": purge_hours, "n_estimators": n_estimators, "n_jobs": n_jobs, "random_state": random_state,
               "input_manifest_sha256": _sha(root / "dataset_manifest.json"), "inputs": hashes,
@@ -519,19 +561,21 @@ def run_benchmarks(dataset_dir, outdir, *, train_end="2014-12-31", validation_en
     _csv(outdir / "validation_thresholds.csv", pd.DataFrame(threshold_rows))
     _csv(outdir / "source_era_counts.csv", pd.DataFrame(era_counts))
     plot_benchmark_results(metrics, predictions, features, outdir)
-    _write_analysis(metrics, splits, outdir, calibration_dates)
+    _write_analysis(metrics, splits, counts, exclusions, outdir, calibration_dates)
     result = {"created_utc": datetime.now(timezone.utc).isoformat(), "workflow": VERSION, "config": config,
               "config_signature": config_signature, "input_workflow": manifest["workflow"], "case_count": len(scores),
               "split_counts": {name: {"NSEP": int((labels[idx] == 0).sum()), "SEP": int((labels[idx] == 1).sum())} for name, idx in split_indices.items()},
+              "cohort_counts": counts.to_dict("records"), "split_exclusion_counts": exclusions.to_dict("records"),
+              "label_policy": LABEL_POLICY,
               "purged_samples": int(splits.split.eq("purged").sum()),
               "calibration_embargo_samples": int(splits.calibration_embargo.sum()),
               "calibration_embargo_dates": calibration_dates, "cases": cases,
               "input_definition": "One original physical feature's 288 chronological pre-flare time samples; metadata and other feature files never enter a model's predictors.",
               "threshold_policy": "Validation-only maximum TSS; fixed .5 test results supplied separately. No test-set optimization.",
               "model_policies": {"RandomForest": "scikit-learn RF on 288 lag values; balanced class weights", "TimeSeriesForest": "sktime TimeSeriesForestClassifier; random intervals with mean, standard deviation and slope; unweighted fitting"},
-              "leakage_controls": "Canonical flare uniqueness; chronological train/validation/test; 30-hour input+label boundary buffer; shared SEP episodes and straddling known episode intervals purged; all instrument-calibration fitting/held-out observation days embargoed against 24h-input/6h-label windows and known positive episode groups; identical splits for all cases.",
+              "leakage_controls": "Canonical flare uniqueness and cross-class temporal overlap checked before fitting. Chronological train/validation/test split with a 30-hour boundary buffer. Shared SEP episodes and known episodes straddling boundaries are purged. Calibration observation days are embargoed against input windows, label horizons and known positive episodes. All cases share the same split.",
               "evaluation_scope": "Retrospectively calibrated-data discrimination; not a strict as-of-time operational forecast replay. Bridge response coefficients may use 2024/2025 instrument observations after earlier classifier test inputs.",
-              "limitations": ["Model discrimination is not a validation of physical calibration", "This retrospective reprocessed-data analysis does not recreate the calibration information available at each historical forecast date", "Correlated and overlapping windows within a partition remain; no independent-observation confidence intervals are claimed", "Performance applies to these held-out years and source eras; consult source_era_counts.csv", "Unknown SEP end timestamps can limit episode grouping; explicit timing buffers and shared known identities still apply", "No trained models are retained by default; checksum-protected predictions support bounded-storage resume"]}
+              "limitations": ["Model discrimination is not a validation of physical calibration", "This retrospective reprocessed-data analysis does not recreate the calibration information available at each historical forecast date", "Correlated and overlapping same-class windows within a partition remain", "Performance applies to these held-out years and source eras; consult source_era_counts.csv", "Unknown SEP end timestamps can limit episode grouping; explicit timing buffers and shared known identities still apply", "No trained models are retained by default; checksum-protected predictions support bounded-storage resume"]}
     _json(outdir / "benchmark_manifest.json", result)
     print("[DONE] {} univariate model cases: {}".format(len(scores), outdir), flush=True)
     return result

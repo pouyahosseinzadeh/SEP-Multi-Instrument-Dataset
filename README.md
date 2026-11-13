@@ -2,6 +2,20 @@
 
 The project collects the original ten feature datasets through December 2025, validates their common SEP/NSEP cohort, and generates paper figures and univariate model results.
 
+## Update a completed collection
+
+Download the [current project ZIP](https://github.com/pouyahosseinzadeh/SEP-Multi-Instrument-Dataset/archive/refs/heads/main.zip). Copy the updated `sep_dataset/` and `scripts/` into your existing server project. Keep the downloaded archive in `data/fresh_1998_2025/native/` and the two historical availability files under `calibration/`. Run from the server project folder:
+
+```bash
+.venv/bin/python -u -m sep_dataset.cli repair \
+  --dataset-dir data/fresh_1998_2025/native \
+  --outdir data/processed/overlap_filtered_ten_1998_2025
+.venv/bin/python -m sep_dataset.cli validate
+.venv/bin/python -u -m sep_dataset.cli plot --with-models --n-jobs 4
+```
+
+This offline update uses the previous collection's measurements. The new output folder keeps earlier results separate. If the native acquisition archive was deleted, follow the fresh download steps below.
+
 ## Start over from fresh downloads
 
 1. Download the [current project ZIP](https://github.com/pouyahosseinzadeh/SEP-Multi-Instrument-Dataset/archive/refs/heads/main.zip). Copy the updated `sep_dataset/`, `scripts/`, `calibration/`, and both requirements files into your existing server project.
@@ -18,14 +32,14 @@ bash scripts/run_fresh_project.sh
 
 Fresh source downloads and checkpoints are in `data/fresh_1998_2025/`. The runner uses this directory independently of earlier `data/cache/` and `data/processed/` releases. You can remove those older generated outputs to reclaim space after saving any files you need. Repeat the same command to resume interrupted downloads and collection. To use a larger mounted disk, pass absolute paths via `--work-dir` and `--outdir`.
 
-The 1998–2013 published data are downloaded and verified against Zenodo checksums. The extension collects source observations and flare labels for 2014–2025. The collector archives the native modern proton spectra needed for calibration. It collects no magnetic-region datasets. The ten validated submission CSVs and their provenance are in `data/processed/recollected_ten_1998_2025/`.
+The 1998–2013 published data are downloaded and verified against Zenodo checksums. The extension collects source observations and flare labels for 2014–2025. The collector archives the native modern proton spectra needed for calibration. It collects no magnetic-region datasets. The ten validated submission CSVs and their provenance are in `data/processed/overlap_filtered_ten_1998_2025/`.
 
 After collection finishes, run the figures and models:
 
 ```bash
 .venv/bin/python -u -m sep_dataset.cli plot \
-  --dataset-dir data/processed/recollected_ten_1998_2025 \
-  --outdir reports/figures_recollected_ten_1998_2025 \
+  --dataset-dir data/processed/overlap_filtered_ten_1998_2025 \
+  --outdir reports/figures_overlap_filtered_ten_1998_2025 \
   --with-models --n-jobs 4
 ```
 
@@ -72,18 +86,20 @@ The response models use simultaneous observations and separate held-out quiet/ev
 
 Physical-flare identity is checked before the cohort is selected. Conflicting SEP/NSEP labels for one identified flare quarantine the entire group; same-label duplicates keep one deterministic representative. Exact UTC onset is the primary key. Nearby onsets require additional matching region and flare-timing evidence. The final files have one canonical flare identity per row and no identity shared across SEP and NSEP. Matching evidence and exclusions are recorded.
 
+An NSEP row is also excluded from all ten files if any of its 288 five-minute predictor bins is shared with any labeled SEP candidate. Each half-open interval starts 24 hours before the five-minute boundary at or immediately after the UTC flare onset and stops at that boundary. Intervals that only touch do not share a bin. All labeled SEP candidates protect their windows, including those excluded by feature-quality rules. This rule only removes NSEP rows. `temporal_overlap_audit.csv` records an example SEP match and the number of bins shared for each flagged NSEP row.
+
 ## Figures and model results
 
 Profiles and PCA retain five integral energy groups: **>5, >10, >30, >60 and >100 MeV**. These are metadata-based selections, not the differential P4/P5/P6 predictor names. The >5 group uses `event_type == 1` and `sep_peak_1 >= 5` pfu; the original four cuts remain unchanged. Saved `event_type == 0` samples provide the NSEP controls.
 
 Descriptive figures include profiles, full-window PCA, Pearson/Spearman correlations, distributions, missingness and measurement-status diagnostics. Images have concise labels; statistical/source methods remain in tables and manifests.
 
-The model stage runs **20 separate univariate cases**: Random Forest and genuine sktime Time Series Forest for every feature. Each case uses only that feature's 288 time samples. Other physical features and metadata labels never enter its predictors. Compact PNG/PDF outputs include:
+The model stage runs **20 separate univariate cases**: Random Forest and genuine sktime Time Series Forest for every feature. Each case uses only that feature's 288 time samples. Other physical features and metadata labels never enter its predictors. The model target is binary `event_type` across all retained samples, including SEP rows with unknown peak flux. The energy cuts apply to the descriptive figures. Compact PNG/PDF outputs include:
 
 - A two-model feature-by-metric heatmap: TSS, HSS, F1, precision, recall, ROC AUC, average precision and balanced accuracy.
 - ROC and precision–recall curves for all ten features, grouped by model.
 - Full metric CSVs, also including PR AUC, confusion counts, thresholds and undefined-metric reasons.
-- Saved validation/test probabilities, the shared split table and `evaluation_summary.md` describing the measured results.
+- Saved validation/test probabilities, the shared split table, `split_counts.csv`, `split_exclusion_counts.csv`, and `evaluation_summary.md`. The counts reconcile the dataset's full SEP population with the smaller held-out test count.
 
 Defaults are chronological: training through 2014, validation in 2015–2019, and testing from 2020 onward. Thirty-hour boundary buffers cover the 24-hour input window plus six-hour label horizon. Known shared or boundary-straddling SEP episodes are purged. The same split is used for every feature/model. Thresholds maximize **validation TSS only**; fixed-0.5 test results are also supplied. Test samples are never oversampled or used to tune a threshold.
 

@@ -5,7 +5,7 @@ project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$project_dir"
 python_bin="${SEP_PYTHON:-${SEP_VENV_DIR:-$project_dir/.venv}/bin/python}"
 work_dir="data/fresh_1998_2025"
-outdir="data/processed/recollected_ten_1998_2025"
+outdir="data/processed/overlap_filtered_ten_1998_2025"
 mask_path=""
 baseline_dir=""
 

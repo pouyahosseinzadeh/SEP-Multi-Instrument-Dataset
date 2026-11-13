@@ -19,11 +19,12 @@ from . import cleaned_builder as cb
 from .compatible_builder import _atomic_csv, _atomic_json, file_sha256
 from .enhanced_builder import NATIVE_WORKFLOW, feature_columns
 from .flare_integrity import IDENTITY_VERSION, audit_flare_identities, assert_flare_label_integrity
+from .temporal_overlap import OVERLAP_POLICY, audit_temporal_overlap, assert_no_temporal_overlap
 
 
 WORKFLOW = "repaired_ten_feature_release_v2"
 FEATURES = tuple(cb.TEN_FEATURES)
-VERSION = "raw-provenance-and-validated-protons-v2"
+VERSION = "raw-provenance-and-validated-protons-v3"
 # Preserve reasonable support for interpolated windows in a fresh release.
 # At least 18 of 24 hours must have anchors, and any one gap is at most 2 h.
 MAX_MISSING_BINS = 72
@@ -134,6 +135,9 @@ def repair_dataset(dataset_dir="data/processed/enhanced_1998_2025", *,
     ids = first_quality.sample_id.astype(str).reset_index(drop=True)
     identity = audit_flare_identities(metadata)
     canonical = identity["canonical_ids"].reset_index(drop=True)
+    overlap_exclude, overlap_audit = audit_temporal_overlap(metadata)
+    overlap_audit.insert(1, "nsep_sample_id", ids.iloc[overlap_audit.source_row_index].to_numpy())
+    overlap_audit.insert(6, "witness_sep_sample_id", ids.iloc[overlap_audit.witness_sep_source_row_index].to_numpy())
     if source_adapter is None:
         from .repair_sources import RepairAdapter
         source_adapter = RepairAdapter(root, original, calibration_bank=calibration_bank, historical_masks=historical_masks)
@@ -154,13 +158,15 @@ def repair_dataset(dataset_dir="data/processed/enhanced_1998_2025", *,
     empty = np.logical_or.reduce(list(empty_by_feature.values()))
     sparse = np.logical_or.reduce(list(high_gap_by_feature.values()) + list(long_gap_by_feature.values())) if fresh else np.zeros(rows, dtype=bool)
     flare_keep = np.asarray(identity["keep"], dtype=bool)
-    keep = flare_keep & ~empty & ~sparse
+    eligible = flare_keep & ~empty & ~sparse
+    keep = eligible & ~overlap_exclude
     retained = int(keep.sum())
     config = {"version": VERSION, "features": list(FEATURES), "source_manifest_sha256": file_sha256(manifest_path),
               "input_files": input_hashes, "input_quality_files": quality_hashes,
               "source_adapter": json.loads(json.dumps(source_adapter.config, sort_keys=True)),
               "adapted_source_fingerprints": adapted_hashes,
-              "identity_policy": IDENTITY_VERSION, "cohort_policy": "Original ten only; remove wholly unavailable rows, whole-row median fallbacks, conflicting flare identities and duplicate physical flares globally",
+              "identity_policy": IDENTITY_VERSION, "temporal_overlap_policy": OVERLAP_POLICY,
+              "cohort_policy": "Original ten only; apply source availability, gap limits, physical-flare identity and NSEP/SEP temporal separation globally",
               "fill_policy": "Linear within-row interpolation; nearest valid edges; no cross-row or label-based filling"}
     if fresh:
         config["gap_limits"] = FRESH_GAP_LIMITS
@@ -184,6 +190,7 @@ def repair_dataset(dataset_dir="data/processed/enhanced_1998_2025", *,
         excluded = mapping.loc[~keep].copy()
         source_reasons = identity["audit"].set_index("source_row_position").exclusion_reason
         excluded["flare_identity_excluded"] = ~flare_keep[~keep]
+        excluded["sep_window_overlap_excluded"] = overlap_exclude[~keep]
         excluded["empty_features"] = [" | ".join(f for f in FEATURES if empty_by_feature[f][i]) for i in np.flatnonzero(~keep)]
         excluded["excessive_gap_features"] = [
             " | ".join(f for f in FEATURES if high_gap_by_feature[f][i] or long_gap_by_feature[f][i]) if fresh else ""
@@ -194,6 +201,7 @@ def repair_dataset(dataset_dir="data/processed/enhanced_1998_2025", *,
                 "flare_identity:" + str(source_reasons.loc[i]) if not flare_keep[i] else "",
                 "wholly_unavailable:" + unavailable.replace(" | ", "|") if unavailable else "",
                 "excessive_gap:" + gaps.replace(" | ", "|") if gaps else "",
+                "nsep_input_overlaps_sep_input" if overlap_exclude[i] else "",
             ) if reason)
             for i, unavailable, gaps in zip(excluded.index, excluded.empty_features, excluded.excessive_gap_features)
         ]
@@ -206,6 +214,11 @@ def repair_dataset(dataset_dir="data/processed/enhanced_1998_2025", *,
         _atomic_csv(output / "cohort_counts.csv", cb._cohort_counts(metadata, keep))
         _atomic_csv(output / "flare_identity_audit.csv", identity["audit"])
         _atomic_json(output / "flare_identity_summary.json", identity["summary"])
+        overlap_audit["otherwise_eligible"] = eligible[overlap_audit.source_row_index.to_numpy(dtype=int)]
+        _atomic_csv(output / "temporal_overlap_audit.csv", overlap_audit)
+        overlap_counts = {"nsep_overlapping_any_source_sep": int(overlap_exclude.sum()),
+                          "additional_nsep_excluded_by_temporal_overlap": int((eligible & overlap_exclude).sum()),
+                          "sep_excluded_by_temporal_overlap": 0}
         if not retained:
             raise ValueError("No samples remain after raw availability and physical-flare identity checks; see exclusions.csv")
         report = _report_payload(source_adapter, "proton_calibration_report")
@@ -216,7 +229,7 @@ def repair_dataset(dataset_dir="data/processed/enhanced_1998_2025", *,
         _atomic_json(output / "historical_mask_report.json", historical_report)
         metadata_missing = metadata.loc[keep, columns].isna().sum()
         _atomic_csv(output / "metadata_availability.csv", metadata_missing.rename_axis("column").reset_index(name="missing_values"))
-        audit_names = ["exclusions.csv", "row_mapping.csv", "cohort_counts.csv", "flare_identity_audit.csv", "flare_identity_summary.json", "proton_calibration_report.json", "historical_mask_report.json", "metadata_availability.csv"]
+        audit_names = ["exclusions.csv", "row_mapping.csv", "cohort_counts.csv", "flare_identity_audit.csv", "flare_identity_summary.json", "temporal_overlap_audit.csv", "proton_calibration_report.json", "historical_mask_report.json", "metadata_availability.csv"]
         if hasattr(source_adapter, "write_audits"):
             for name in source_adapter.write_audits(output):
                 name = str(name)
@@ -300,6 +313,7 @@ def repair_dataset(dataset_dir="data/processed/enhanced_1998_2025", *,
                            "class_counts_before": cb._class_counts(metadata), "class_counts_after": cb._class_counts(kept_metadata),
                            "empty_feature_rows": {f: int(empty_by_feature[f].sum()) for f in FEATURES},
                            "identity_summary": identity["summary"], "policy": config["fill_policy"],
+                           "temporal_overlap": overlap_counts,
                            "limitations": "Filled cells are imputations; supported modern proton values are validated legacy-equivalent estimates within their recorded calibration domain, not native legacy measurements."}
         if fresh:
             cleaning_report["gap_limits"] = config["gap_limits"]
@@ -310,6 +324,7 @@ def repair_dataset(dataset_dir="data/processed/enhanced_1998_2025", *,
                 "Every saved feature row has 288 finite values. Partial gaps are interpolated within the same row; entirely unavailable rows and identity conflicts are excluded globally.",
                 "Historical raw missingness is restored before selection. Modern proton values require a passed source-specific calibration; unsupported source rows are excluded.",
                 "The same physical flare cannot occur in both SEP and NSEP. See flare_identity_audit.csv and exclusions.csv.",
+                f"Temporal separation excluded {overlap_counts['additional_nsep_excluded_by_temporal_overlap']} otherwise eligible NSEP rows with shared SEP input bins. See temporal_overlap_audit.csv.",
                 cleaning_report["limitations"]]
         if fresh:
             text.append(f"Each retained feature window has at most {MAX_MISSING_BINS} filled bins and no run of more than {MAX_CONSECUTIVE_GAP_BINS} consecutive filled bins.")
@@ -322,6 +337,7 @@ def repair_dataset(dataset_dir="data/processed/enhanced_1998_2025", *,
                     "audit_files_sha256": {name: file_sha256(output / name) for name in sorted(set(audit_names))},
                     "class_counts_before": cleaning_report["class_counts_before"], "class_counts_after": cleaning_report["class_counts_after"],
                     "cleaning_policy": config["fill_policy"], "identity_summary": identity["summary"],
+                    "temporal_overlap": overlap_counts,
                     "source_audits": "Native/source audit files remain in the immutable enhanced archive; calibration and raw-mask provenance are included in this derivative."}
         _atomic_json(output / "dataset_manifest.json", manifest)
         _atomic_json(state_path, {"state": "verifying", "completed_features": list(FEATURES), "config": config})
@@ -361,6 +377,8 @@ def validate_repaired_audits(root, manifest, mapping, exclusions, metadata):
     if not np.array_equal(audit.event_type.iloc[mapping.source_row_index].to_numpy(), metadata.event_type.to_numpy()):
         raise ValueError("Identity audit labels changed in the retained dataset")
     assert_flare_label_integrity(metadata)
+    if "temporal_overlap_policy" in manifest["config"]:
+        _validate_overlap_audit(root, manifest, mapping, exclusions, metadata, audit)
     report = json.loads((root / "proton_calibration_report.json").read_text())
     if report.get("status") != "passed":
         raise ValueError("Repaired proton calibration policy did not pass")
@@ -407,6 +425,43 @@ def validate_repaired_audits(root, manifest, mapping, exclusions, metadata):
                     raise ValueError("A retained proton value uses an unsupported source/model")
                 if ("D" in row.point_status or "H" in row.point_status) and (not keys or not calibration_ids):
                     raise ValueError("Derived proton values lack validated model provenance")
+
+
+def _validate_overlap_audit(root, manifest, mapping, exclusions, metadata, identity_audit):
+    name = "temporal_overlap_audit.csv"
+    if manifest["config"]["temporal_overlap_policy"] != OVERLAP_POLICY or name not in manifest["audit_files_sha256"]:
+        raise ValueError("Temporal overlap policy or audit is missing or invalid")
+    assert_no_temporal_overlap(metadata)
+    source = identity_audit.rename(columns={"FlrOnset_utc": "FlrOnset"})
+    overlap, expected = audit_temporal_overlap(source)
+    if overlap[mapping.source_row_index.to_numpy(dtype=int)].any():
+        raise ValueError("A retained NSEP window overlaps a source SEP window")
+    combined = pd.concat([mapping, exclusions], ignore_index=True).set_index("source_row_index")
+    combined = combined.sort_index()
+    combined_onsets = pd.to_datetime(combined.FlrOnset, utc=True, format="mixed")
+    source_onsets = pd.to_datetime(source.FlrOnset, utc=True, format="mixed")
+    if not np.array_equal(combined_onsets, source_onsets) or not np.array_equal(combined.event_type, source.event_type):
+        raise ValueError("Temporal overlap source onsets or labels disagree with the cohort")
+    expected.insert(1, "nsep_sample_id", combined.loc[expected.source_row_index, "sample_id"].to_numpy())
+    expected.insert(6, "witness_sep_sample_id", combined.loc[expected.witness_sep_source_row_index, "sample_id"].to_numpy())
+    removed = exclusions.set_index("source_row_index")
+    flagged = overlap[exclusions.source_row_index.to_numpy(dtype=int)]
+    if not np.array_equal(exclusions.sep_window_overlap_excluded.to_numpy(), flagged):
+        raise ValueError("Temporal exclusions disagree with the source window overlap")
+    old_exclusion = (removed.flare_identity_excluded
+                     | removed.empty_features.fillna("").ne("")
+                     | removed.excessive_gap_features.fillna("").ne(""))
+    expected["otherwise_eligible"] = (~old_exclusion).loc[expected.source_row_index].to_numpy()
+    date_columns = [column for column in expected if column.endswith("_utc")]
+    saved = pd.read_csv(root / name, dtype={"nsep_sample_id": str, "witness_sep_sample_id": str})
+    for column in date_columns:
+        saved[column] = pd.to_datetime(saved[column], utc=True, format="mixed")
+    pd.testing.assert_frame_equal(saved, expected, check_dtype=False, check_exact=True)
+    counts = {"nsep_overlapping_any_source_sep": int(overlap.sum()),
+              "additional_nsep_excluded_by_temporal_overlap": int(expected.otherwise_eligible.sum()),
+              "sep_excluded_by_temporal_overlap": 0}
+    if manifest.get("temporal_overlap") != counts:
+        raise ValueError("Temporal overlap counts disagree with the audit")
 
 
 def validate_repaired_dataset(dataset_dir):

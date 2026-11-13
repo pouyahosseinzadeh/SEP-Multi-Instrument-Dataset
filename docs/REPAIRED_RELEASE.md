@@ -69,7 +69,9 @@ Exact UTC onset is the primary identity key. Nearby onsets require the same know
 
 Conflicting SEP/NSEP groups and ambiguous region identities are quarantined. Same-label duplicates keep one deterministic representative, preserving its original metadata and label. The final release has one canonical identified flare per row, with no identity shared between classes. Incomplete catalog metadata can still limit physical identification; the audit records the exact matching evidence.
 
-Canonical IDs and original sample/source-row IDs live in the sidecars and row mapping, preserving the original 52 metadata columns. `flare_identity_audit.csv` covers every source row, and `exclusions.csv` combines identity and unavailable-feature reasons.
+Canonical IDs and original sample/source-row IDs live in the sidecars and row mapping, preserving the original 52 metadata columns. `flare_identity_audit.csv` covers every source row, and `exclusions.csv` records the applicable identity, availability and time-overlap reasons.
+
+The time-overlap filter removes any NSEP predictor window sharing at least one of the 288 saved five-minute slots with any source SEP predictor window, including SEP candidates subsequently removed for quality. Slots use the existing UTC ceiling alignment. The final interval is half-open, so windows that only touch are allowed. `temporal_overlap_audit.csv` identifies a reproducible SEP match, the shared-bin count, and whether the NSEP would otherwise have passed. The rule leaves the SEP class intact. Its scope is the saved predictor windows.
 
 ## Univariate model evaluation
 
@@ -87,6 +89,8 @@ To run models alone:
 The defaults are 200 trees, training through 2014, validation in 2015–2019, and testing from 2020 onward. Thirty-hour boundary buffers cover input-window and label-horizon overlap. Known shared or straddling SEP episodes are purged. All cases use the same saved identities and split.
 
 The copied calibration bank records the actual fitting and held-out observation days for every instrument-response artifact. The union of those days is embargoed from classifier training, validation and testing: a sample is excluded if its interval from 24 hours before flare onset through six hours after onset intersects a calibration day. All members of a known positive SEP episode intersecting those days are also excluded. The saved split and `calibration_embargo.csv` identify each affected sample, its reason and calibration days. A missing calibration-date audit is an error, and a partition losing either class stops the benchmark before model fitting; dates are not adjusted in response to test labels.
+
+The benchmark uses binary `event_type` for every retained flare. Integral energy cuts are used for the descriptive figures, including the >5 MeV group with a reported peak of at least 5 pfu. A missing peak does not change a binary SEP label. `split_counts.csv` reconciles the full retained class counts with the model train, validation and test counts. `split_exclusion_counts.csv` gives the reasons for model-only exclusions.
 
 The threshold is selected using validation TSS only, with deterministic tie-breaking; fixed-0.5 results are also exported. Test labels do not tune thresholds or sampling. Random Forest uses balanced class weights; the reference TSF uses documented unweighted fitting. No test oversampling is performed. Undefined metrics, such as precision when there are no positive predictions, remain unavailable with reasons.
 

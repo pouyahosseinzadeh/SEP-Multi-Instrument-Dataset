@@ -9,8 +9,8 @@ ENHANCED_DIR = "data/processed/enhanced_1998_2025"
 CLEANED_DIR = "data/processed/cleaned_1998_2025"
 CLEANED_TEN_DIR = "data/processed/cleaned_ten_1998_2025"
 REPAIRED_DIR = "data/processed/repaired_ten_1998_2025"
-FRESH_DATASET_DIR = "data/processed/recollected_ten_1998_2025"
-FIGURE_DIR = "reports/figures_recollected_ten_1998_2025"
+FRESH_DATASET_DIR = "data/processed/overlap_filtered_ten_1998_2025"
+FIGURE_DIR = "reports/figures_overlap_filtered_ten_1998_2025"
 FRESH_WORK_DIR = "data/fresh_1998_2025"
 PLOT_FEATURES = ("Vx", "flow_speed", "proton_density", "T", "F", "Xs", "Xl", "P4", "P5", "P6")
 
@@ -45,7 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
     clean.add_argument("--dataset-dir", default=ENHANCED_DIR)
     clean.add_argument("--outdir", default=None, help=f"Default: {CLEANED_TEN_DIR} with --original-ten-only; otherwise {CLEANED_DIR}.")
     clean.add_argument("--original-ten-only", action="store_true", help="Recalculate the common cohort using only the original ten features in the existing enhanced archive; no downloads.")
-    repair = sub.add_parser("repair", help="Restore raw historical availability, enforce flare identity and apply validated source-scoped proton response estimates.")
+    repair = sub.add_parser("repair", help="Apply data quality and proton calibration checks and remove NSEP windows that overlap SEP inputs.")
     repair.add_argument("--dataset-dir", default=ENHANCED_DIR)
     repair.add_argument("--outdir", default=REPAIRED_DIR)
     repair.add_argument("--calibration-bank", help="Validated calibration bank; defaults to the versioned bundled bank.")
@@ -81,13 +81,20 @@ def _model_arguments(parser):
     parser.add_argument("--random-state", type=int, default=42)
 
 
+def _require_model_release(manifest):
+    from .temporal_overlap import OVERLAP_POLICY
+
+    if (manifest.get("workflow") != "repaired_ten_feature_release_v2"
+            or manifest.get("config", {}).get("temporal_overlap_policy") != OVERLAP_POLICY):
+        raise ValueError("Run 'repair' on the unfiltered native acquisition before benchmarking to apply the SEP/NSEP time-overlap filter.")
+
+
 def _benchmark(args, outdir, validated=False):
     from .benchmark import run_benchmarks
     root = Path(args.dataset_dir)
     if not validated:
         completed = _completed_manifest(root, "benchmarking")
-        if completed.get("workflow") != "repaired_ten_feature_release_v2":
-            raise ValueError("Run 'repair' on the unfiltered enhanced archive before benchmarking.")
+        _require_model_release(completed)
         _validate_release(root, completed)
     return run_benchmarks(root, outdir, train_end=args.train_end, validation_end=args.validation_end,
                           n_estimators=args.n_estimators, n_jobs=args.n_jobs, random_state=args.random_state)
@@ -239,7 +246,8 @@ def main(argv: list[str] | None = None) -> None:
                                 calibration_bank=args.calibration_bank, historical_masks=args.historical_masks)
         print(json.dumps({"outdir": args.outdir, "workflow": result["workflow"],
                           "rows_per_feature": result["total_rows_per_feature"],
-                          "excluded_rows": result["excluded_rows"]}, indent=2), flush=True)
+                          "excluded_rows": result["excluded_rows"],
+                          "temporal_overlap": result["temporal_overlap"]}, indent=2), flush=True)
     elif args.command == "plot":
         from .compatible_figures import run_compatible_figures
         root = Path(args.dataset_dir)
@@ -247,8 +255,8 @@ def main(argv: list[str] | None = None) -> None:
         features = tuple(args.features) if args.features else PLOT_FEATURES
         if args.with_models and features != PLOT_FEATURES:
             raise ValueError("--with-models evaluates all ten original features; omit --features or use the original ten in order.")
-        if args.with_models and completed.get("workflow") != "repaired_ten_feature_release_v2":
-            raise ValueError("Run 'repair' on the unfiltered enhanced archive before benchmarking.")
+        if args.with_models:
+            _require_model_release(completed)
         if completed.get("workflow") == "repaired_ten_feature_release_v2":
             _validate_release(root, completed)
         _validate_plot_inputs(root, completed, features)

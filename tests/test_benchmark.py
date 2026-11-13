@@ -59,6 +59,8 @@ def test_temporal_buffer_and_shared_episodes_are_purged_before_evaluation():
     })
     result = bm.chronological_splits(metadata)
     assert result.loc[1, "split"] == result.loc[3, "split"] == "purged"
+    assert result.loc[1, "calendar_partition"] == "train"
+    assert result.loc[3, "calendar_partition"] == "validation"
     assert result.loc[2, "exclusion_reason"] == result.loc[6, "exclusion_reason"] == "boundary_input_and_label_buffer"
     assert result.loc[0, "split"] == "train"
     assert result.loc[4, "split"] == "validation"
@@ -99,6 +101,7 @@ def release(root, features=bm.FEATURES):
     dates += list(pd.date_range("2023-01-01", periods=n, freq="2D"))
     labels = np.tile([0, 1], 3 * n // 2)
     metadata = pd.DataFrame({"FlrOnset": pd.DatetimeIndex(dates).astype(str), "event_type": labels,
+                             "sep_peak_1": np.where(labels, 0.1, np.nan),
                              "sep_start": [None] * len(dates), "sep_end": [None] * len(dates)})
     entries = []
     for j, feature in enumerate(features):
@@ -149,7 +152,12 @@ def test_actual_twenty_cases_share_one_split_export_metrics_and_resume_without_r
             identities.append(case.sample_id.tolist())
         assert all(ids == identities[0] for ids in identities)
     assert len(list(out.glob("*.png"))) == len(list(out.glob("*.pdf"))) == 3
-    assert (out / "evaluation_summary.md").is_file()
+    summary = (out / "evaluation_summary.md").read_text()
+    assert "9 held-out SEP samples" in summary
+    assert "27 SEP samples across all calendar partitions" in summary
+    assert "No proton energy or peak-flux cutoff is applied." in summary
+    assert pd.read_csv(out / "split_counts.csv").set_index("partition").loc["all", "input_SEP"] == 27
+    assert pd.read_csv(out / "split_exclusion_counts.csv").empty
     def cannot_refit():
         raise AssertionError("A valid prediction checkpoint must be reused")
     monkeypatch.setattr(bm, "_estimators", lambda *args: {m: cannot_refit for m in bm.MODELS})
@@ -217,6 +225,13 @@ def test_calibration_embargo_removes_whole_known_positive_episode():
     assert result.loc[1, "split"] == result.loc[2, "split"] == "purged"
     assert result.loc[2, "exclusion_reason"] == "SEP_episode_calibration_embargo"
     assert result.loc[3, "split"] == "validation"
+    counts = bm._partition_counts(result).set_index("partition")
+    assert counts.loc["validation", "input_SEP"] == counts.loc["validation", "purged_SEP"] == 2
+    assert counts.loc["all", "used_SEP"] == counts.loc["test", "used_SEP"] == 1
+    exclusions = bm._exclusion_counts(result).set_index(["calendar_partition", "exclusion_reason"])
+    assert exclusions.loc[("validation", "calibration_observation_day_embargo"), "SEP"] == 1
+    assert exclusions.loc[("validation", "SEP_episode_calibration_embargo"), "SEP"] == 1
+    assert exclusions.NSEP.sum() == 0
 
 
 def test_calibration_bank_dates_union_all_artifacts_and_require_traceability(tmp_path):
@@ -249,4 +264,23 @@ def test_embargo_eliminating_one_class_stops_before_any_model_fit(tmp_path, monk
     saved = pd.read_csv(out / "splits.csv")
     assert saved[saved.split.eq("test")].event_type.eq(0).all()
     assert (out / "calibration_embargo.csv").is_file()
+    assert (out / "split_counts.csv").is_file()
+    assert (out / "split_exclusion_counts.csv").is_file()
     assert not list((out / "cases").glob("*"))
+
+
+def test_direct_benchmark_rejects_overlapping_cross_class_predictor_windows(tmp_path, monkeypatch):
+    source, out = tmp_path / "data", tmp_path / "benchmark"
+    release(source, features=("F",))
+    path = next(source.glob("*_with_F_filled.csv"))
+    data = pd.read_csv(path)
+    data.loc[0, "FlrOnset"] = "2013-01-02T23:00:00Z"
+    data.to_csv(path, index=False)
+    manifest_path = source / "dataset_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["feature_files"][0]["sha256"] = _digest(path)
+    manifest_path.write_text(json.dumps(manifest))
+    monkeypatch.setattr(bm, "_estimators", lambda *args: pytest.fail("Overlapping input must not reach fitting"))
+    with pytest.raises(ValueError, match="NSEP predictor windows overlap"):
+        bm.run_benchmarks(source, out, features=("F",))
+    assert not out.exists()

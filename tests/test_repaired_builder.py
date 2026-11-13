@@ -128,6 +128,33 @@ def test_conflicting_sep_nsep_flare_is_quarantined_in_all_ten_files(tmp_path, ar
     assert rb.validate_repaired_dataset(output)["feature_files"] == 10
 
 
+def test_temporal_filter_removes_only_nsep_even_if_witness_fails_quality(tmp_path, artifact):
+    source, output = tmp_path / "enhanced", tmp_path / "repaired"
+    fixture_enhanced(source, missing_rows={"P6": [1]})
+    _edit_source_metadata(source, {2: {"FlrOnset": "2014-01-03 02:55:00"}})
+    result = rb.repair_dataset(source, outdir=output, source_adapter=Adapter(source, artifact))
+    assert result["temporal_overlap"] == {"nsep_overlapping_any_source_sep": 1,
+                                          "additional_nsep_excluded_by_temporal_overlap": 1,
+                                          "sep_excluded_by_temporal_overlap": 0}
+    assert result["class_counts_after"] == {"NSEP": 1, "SEP": 1}
+    for feature in rb.FEATURES:
+        assert read_quality(output, feature).sample_id.tolist() == ["flare-0", "flare-3"]
+    excluded = pd.read_csv(output / "exclusions.csv")
+    assert excluded.exclusion_reason.tolist() == ["wholly_unavailable:P6", "nsep_input_overlaps_sep_input"]
+    audit_path = output / "temporal_overlap_audit.csv"
+    audit = pd.read_csv(audit_path)
+    assert audit[["nsep_sample_id", "witness_sep_sample_id", "overlap_bins"]].iloc[0].tolist() == ["flare-2", "flare-1", 1]
+    assert rb.validate_repaired_dataset(output)["valid"]
+    audit["overlap_bins"] = 2
+    audit.to_csv(audit_path, index=False)
+    manifest_path = output / "dataset_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["audit_files_sha256"][audit_path.name] = digest(audit_path)
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(AssertionError, match="overlap_bins"):
+        rb.validate_repaired_dataset(output)
+
+
 def test_fresh_cohort_excludes_long_or_excessive_gaps_and_preserves_threshold_anchors(tmp_path, artifact):
     source, output = tmp_path / "native", tmp_path / "repaired"
     fixture_enhanced(source)

@@ -482,6 +482,10 @@ def validate_cleaned_dataset(dataset_dir, *, allow_verifying=False):
     allowed_reasons = exclusions[empty_columns].any(axis=1) if set(empty_columns).issubset(exclusions) else pd.Series(False, index=exclusions.index)
     if repaired and "flare_identity_excluded" in exclusions:
         allowed_reasons = allowed_reasons | exclusions.flare_identity_excluded.eq(True)
+    if repaired and "temporal_overlap_policy" in manifest["config"]:
+        if "sep_window_overlap_excluded" not in exclusions or not exclusions.sep_window_overlap_excluded.isin([True, False]).all():
+            raise ValueError("Invalid temporal overlap exclusion flags")
+        allowed_reasons |= exclusions.sep_window_overlap_excluded.eq(True)
     gap_limits = repaired and "gap_limits" in manifest["config"]
     if gap_limits:
         from .repaired_builder import FRESH_GAP_LIMITS, _insufficient_support
@@ -489,7 +493,7 @@ def validate_cleaned_dataset(dataset_dir, *, allow_verifying=False):
             raise ValueError("Fresh release gap policy or exclusion records are invalid")
         allowed_reasons |= exclusions.excessive_gap_features.fillna("").str.len().gt(0)
     if not set(empty_columns).issubset(exclusions) or (len(exclusions) and not allowed_reasons.all()):
-        raise ValueError("Excluded samples lack an entirely unavailable feature reason")
+        raise ValueError("Excluded samples lack a valid exclusion reason")
     original_indices = mapping.source_row_index.tolist() + exclusions.source_row_index.tolist()
     if sorted(original_indices) != list(range(manifest["source_total_rows"])):
         raise ValueError("Cleaned row mapping does not partition the original samples")
